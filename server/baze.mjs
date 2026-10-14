@@ -63,7 +63,8 @@ export async function handleApi(request, env, config, {fetchImpl=fetch,now=()=>p
   const started=now();
   try {
     const headers={Authorization:`Bearer ${key}`,Accept:'application/json'};
-    const options={method:isModels?'GET':'POST',headers,signal:controller.signal,redirect:'error'};
+    // Workers supports manual/follow; manual keeps the key off redirect targets.
+    const options={method:isModels?'GET':'POST',headers,signal:controller.signal,redirect:'manual'};
     if(isSummary){headers['Content-Type']='application/json';options.body=JSON.stringify({model:input.model,messages:[{role:'system',content:config.systemPrompt},{role:'user',content:`제목: ${input.email.subject??''}\n\n${input.email.body}`}],stream:false,max_tokens:config.maxTokens});}
     const response=await fetchImpl(`${GATEWAY}${isModels?'/models/?type=llm':'/chat/completions/'}`,options);
     if(!response.ok) return gatewayError(response.status);

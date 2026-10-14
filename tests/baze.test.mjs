@@ -19,7 +19,7 @@ test('missing key returns actionable error without network',async()=>{
 test('real gateway request uses fixed origin, baseline prompt, no retries or synthetic metrics',async()=>{
   let calls=0;let tick=0;
   const r=await handleApi(req(),env,config,{now:()=>tick++*421,fetchImpl:async(url,options)=>{
-    calls++;assert.equal(url,GATEWAY+'/chat/completions/');assert.equal(options.headers.Authorization,'Bearer '+env.BAZE_API_KEY);assert.equal(options.redirect,'error');
+    calls++;assert.equal(url,GATEWAY+'/chat/completions/');assert.equal(options.headers.Authorization,'Bearer '+env.BAZE_API_KEY);assert.equal(options.redirect,'manual');
     const b=JSON.parse(options.body);assert.equal(b.model,input.model);assert.equal(b.max_tokens,16384);assert.equal(b.stream,false);assert.equal(b.messages[0].content,config.systemPrompt);assert.equal(b.messages[1].content,'제목: 회의\n\n내일 17시 연구실에서 만납시다.');assert.equal(b.temperature,undefined);assert.equal(b.tools,undefined);
     return Response.json(payload);
   }});
