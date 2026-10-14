@@ -1,0 +1,10 @@
+services:
+  fincode:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      BAZE_API_KEY: ${BAZE_API_KEY:-}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true

@@ -1,4 +1,13 @@
 *
-!dist/
-!dist/**
 !Dockerfile
+!requirements.txt
+!backend/
+!backend/**
+!config/
+!config/**
+!public/
+!public/**
+backend/**/__pycache__/
+backend/**/.pytest_cache/
+backend/**/*.pyc
+backend/tests/
