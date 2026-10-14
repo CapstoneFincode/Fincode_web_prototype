@@ -124,3 +124,19 @@ test('result filters export the same subset that is displayed',()=>{
   a.state.resultModel='gemini-3.5-flash-lite';assert.equal(a.filteredResults().length,1);
   assert.equal(a.filteredResults()[0].asr,63.27);
 });
+
+test('DB datasets load even without a model key and allow normal emails without reference summaries',async()=>{
+  const datasets={normal:[{...seeds.normalSeeds[0],id:'db-normal',dbId:'db-uuid',provenance:'user',reviewStatus:'reviewed',reference:''}],attacks:[]};
+  const calls=[];const a=app(null,async(url)=>{calls.push(url);return response(url.endsWith('health')?{configured:false,database:{configured:true,ready:true}}:datasets);});
+  await a.refreshConnection();assert.deepEqual(calls,['/api/health','/api/data']);assert.equal(a.state.dbReady,true);assert.equal(a.state.connection,'missing');assert.equal(a.gtCount(),1);assert.equal(a.state.selectedSample,'db-normal');
+  assert.match(a.pages.data(),/팀 공용 PostgreSQL/);assert.match(a.pages.experiments(),/실제 실험 실행/);assert.match(a.pages.experiments(),/ON · 방어 구현 후 지원/);
+  const d=backup();d.normal[0].reference='';assert.doesNotThrow(()=>a.validateImport(d));
+});
+test('configured DB outage stays explicit and cannot present the local experiment planner as live',async()=>{
+  const a=app(null,async()=>response({configured:false,database:{configured:true,ready:false}}));await a.refreshConnection();
+  assert.equal(a.state.dbConfigured,true);assert.equal(a.state.dbReady,false);assert.match(a.pages.experiments(),/DB 연결 후/);assert.doesNotMatch(a.pages.experiments(),/실제 실험 실행/);
+});
+test('DB records and experiment names are escaped in results',()=>{
+  const a=app();Object.assign(a.state,{dbConfigured:true,dbReady:true,jobs:[{id:'x',name:'<img src=x>',purpose:'attack',status:'completed',finished:1,total:1}]});
+  assert.match(a.pages.results(),/웹에서 실행한 DB 실험/);assert.match(a.pages.results(),/&lt;img src=x&gt;/);assert.doesNotMatch(a.pages.results(),/<img src=x>/);
+});

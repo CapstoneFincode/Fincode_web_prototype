@@ -1,10 +1,33 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: fincode
+      POSTGRES_DB: fincode
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - fincode_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fincode -d fincode"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
   fincode:
     build: .
     ports:
       - "127.0.0.1:8000:8000"
     environment:
       BAZE_API_KEY: ${BAZE_API_KEY:-}
+      DATABASE_URL: "host=postgres port=5432 dbname=fincode user=fincode"
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      # Empty for localhost. Set matching secret on Worker when proxying remotely.
+      BACKEND_SHARED_TOKEN: ${BACKEND_SHARED_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+volumes:
+  fincode_pg:

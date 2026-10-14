@@ -13,6 +13,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from contextlib import asynccontextmanager
+import secrets
+from uuid import uuid4
+
+from backend.persistence import Persistence
 from urllib.parse import urlsplit
 
 import httpx
@@ -146,9 +151,24 @@ def summary_text(message: Any) -> str:
     return refusal if isinstance(refusal, str) else ""
 
 
-def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBaseTransport | None = None, database_url: str | None = None, run_worker: bool = True) -> FastAPI:
     """Allow an injected HTTP transport only for deterministic offline tests."""
-    app = FastAPI(title="Fincode email summarizer", docs_url=None, redoc_url=None, openapi_url=None)
+    persistence = Persistence(database_url if database_url is not None else os.environ.get('DATABASE_URL', ''), CONFIG)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        task = asyncio.create_task(persistence.loop(generate, configured_key)) if persistence.db and run_worker else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    app = FastAPI(lifespan=lifespan, title="Fincode email summarizer", docs_url=None, redoc_url=None, openapi_url=None)
 
     def configured_key() -> str:
         return (api_key if api_key is not None else os.environ.get("BAZE_API_KEY", "")).strip()
@@ -159,6 +179,10 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
 
     @app.middleware("http")
     async def no_store_api(request: Request, call_next):
+        shared_token = os.environ.get('BACKEND_SHARED_TOKEN','')
+        if shared_token and request.url.path.startswith('/api/') and request.url.path != '/api/health':
+            if not secrets.compare_digest(request.headers.get('X-Fincode-Backend-Token','').encode(),shared_token.encode()):
+                return JSONResponse({'error':{'code':'UNAUTHORIZED','message':'인증된 대시보드에서 접근해 주세요.'}},status_code=401)
         response = await call_next(request)
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
@@ -195,19 +219,20 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
 
         elapsed = latency()
         if response.status_code in {401, 403}:
-            raise APIError(502, "GATEWAY_AUTH_ERROR", "BAZE 인증에 실패했습니다. 이 게이트웨이에서 발급한 API 키인지 확인해 주세요.", latencyMs=elapsed)
+            raise APIError(502, "GATEWAY_AUTH_ERROR", "BAZE 인증에 실패했습니다. 이 게이트웨이에서 발급한 API 키인지 확인해 주세요.", latencyMs=elapsed, upstreamStatus=response.status_code)
         if response.status_code == 429:
-            raise APIError(429, "GATEWAY_RATE_LIMIT", "BAZE 사용 한도 또는 요청 빈도 제한에 도달했습니다. 잠시 후 다시 시도해 주세요.", latencyMs=elapsed)
+            raise APIError(429, "GATEWAY_RATE_LIMIT", "BAZE 사용 한도 또는 요청 빈도 제한에 도달했습니다. 잠시 후 다시 시도해 주세요.", latencyMs=elapsed, upstreamStatus=response.status_code)
         if 400 <= response.status_code < 500:
-            raise APIError(422, "GATEWAY_REQUEST_REJECTED", "BAZE가 요청을 거절했습니다. 선택한 모델의 이용 가능 여부를 확인해 주세요.", latencyMs=elapsed)
+            raise APIError(422, "GATEWAY_REQUEST_REJECTED", "BAZE가 요청을 거절했습니다. 선택한 모델의 이용 가능 여부를 확인해 주세요.", latencyMs=elapsed, upstreamStatus=response.status_code)
         if not 200 <= response.status_code < 300:
-            raise APIError(502, "GATEWAY_UNAVAILABLE", "BAZE 서버에서 정상 응답을 받지 못했습니다.", latencyMs=elapsed)
+            raise APIError(502, "GATEWAY_UNAVAILABLE", "BAZE 서버에서 정상 응답을 받지 못했습니다.", latencyMs=elapsed, upstreamStatus=response.status_code)
         try:
             data = response.json()
         except (ValueError, UnicodeDecodeError, RecursionError) as exc:
-            raise APIError(502, "GATEWAY_UNAVAILABLE", "BAZE 응답 형식을 확인할 수 없습니다.", latencyMs=elapsed) from exc
+            raise APIError(502, "GATEWAY_UNAVAILABLE", "BAZE 응답 형식을 확인할 수 없습니다.", latencyMs=elapsed, upstreamStatus=response.status_code) from exc
         if not isinstance(data, dict):
-            raise APIError(502, "GATEWAY_UNAVAILABLE", "BAZE 응답 형식을 확인할 수 없습니다.", latencyMs=elapsed)
+            raise APIError(502, "GATEWAY_UNAVAILABLE", "BAZE 응답 형식을 확인할 수 없습니다.", latencyMs=elapsed, upstreamStatus=response.status_code)
+        data["_upstreamStatus"] = response.status_code
         return data, latency()
 
     @app.get("/api/health")
@@ -216,7 +241,8 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             "configured": bool(configured_key()),
             "provider": "baze",
             "promptVersion": CONFIG["version"],
-            "features": {"summarize": True, "attachments": False, "defenses": False},
+            "features": {"summarize": True, "attachments": False, "defenses": False, "experiments": bool(persistence.db)},
+            "database": await persistence.health(),
         }
 
     @app.get("/api/models")
@@ -237,24 +263,16 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             result.append({"id": model_id, "ownedBy": entry.get("owned_by") if isinstance(entry.get("owned_by"), str) else None})
         return {"models": result, "provider": "baze"}
 
-    @app.post("/api/summarize")
-    async def summarize(request: Request) -> dict[str, Any]:
-        model, subject, body = validate_summary(await read_payload(request))
+    async def generate(model, messages, max_tokens=CONFIG['maxTokens']):
         data, elapsed = await gateway("POST", "/chat/completions/", {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": CONFIG["systemPrompt"]},
-                {"role": "user", "content": f"제목: {subject}\n\n{body}"},
-            ],
-            "stream": False,
-            "max_tokens": CONFIG["maxTokens"],
+            "model": model, "messages": messages, "stream": False, "max_tokens": max_tokens,
         })
         usage = usage_from(data.get("usage"))
         choices = data.get("choices")
         choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
         text = summary_text(choice.get("message"))
         if not text.strip():
-            raise APIError(502, "EMPTY_RESPONSE", "모델이 요약 텍스트를 반환하지 않았습니다. 토큰 사용량을 확인하고 다른 모델로 시도해 주세요.", usage=usage, latencyMs=elapsed)
+            raise APIError(502, "EMPTY_RESPONSE", "모델이 요약 텍스트를 반환하지 않았습니다. 토큰 사용량을 확인하고 다른 모델로 시도해 주세요.", usage=usage, usageRaw=data.get("usage"), upstreamStatus=data.get("_upstreamStatus"), latencyMs=elapsed)
         finish_reason = choice.get("finish_reason") if isinstance(choice.get("finish_reason"), str) else None
         warnings = ["출력 토큰 한도에 도달하여 요약이 중간에 끝났을 수 있습니다."] if finish_reason == "length" else []
         if finish_reason == "content_filter":
@@ -270,10 +288,30 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             "promptVersion": CONFIG["version"],
             "defense": "off",
             "usage": usage,
+            "usageRaw": data.get("usage") if isinstance(data.get("usage"),dict) else None,
+            "upstreamStatus": data.get("_upstreamStatus"),
             "latencyMs": elapsed,
             "finishReason": finish_reason,
             "warnings": warnings,
         }
+
+    @app.post('/api/summarize')
+    async def summarize(request: Request):
+        payload = await read_payload(request)
+        model, subject, body = validate_summary(payload)
+        if not configured_key():
+            raise APIError(503, 'API_KEY_MISSING', '서버에 BAZE_API_KEY를 설정해 주세요.')
+        messages = [{'role':'system','content':CONFIG['systemPrompt']}, {'role':'user','content':f'제목: {subject}\n\n{body}'}]
+        if not persistence.db:
+            return await generate(model, messages)
+        # Only accepted baseline fields enter the immutable snapshot.
+        data = {'kind':'summary','model':model,'email':{'subject':subject,'body':body},
+                'idempotencyKey':payload.get('idempotencyKey',str(uuid4()))}
+        return await persistence.summarize(data, messages, generate)
+
+    persistence.install(app, read_payload, configured_key)
+    app.state.worker_once = lambda: persistence.worker_once(generate, configured_key)
+    app.state.database = persistence.db
 
     app.mount("/", StaticFiles(directory=ROOT / "public", html=True), name="dashboard")
     return app

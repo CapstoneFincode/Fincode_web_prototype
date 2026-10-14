@@ -1,9 +1,10 @@
 # 핀코드 · LLM Security Lab
 
-한림대학교 캡스톤디자인 **LLM 프롬프트 인젝션 공격·방어 실험 플랫폼**입니다. 현재는 BAZE/HAI-GPT를 통한 이메일 본문 요약과 실제 사용량 측정을 구현한 단계입니다.
+한림대학교 캡스톤디자인 **LLM 프롬프트 인젝션 공격·방어 실험 플랫폼**입니다. 이 `database` 브랜치는 PostgreSQL 데이터 관리와 자체 공격 실행·결과 저장을 연결합니다. BAZE/HAI-GPT로 모델을 호출하며 현재 실행 방어는 OFF입니다.
 
 - 팀 저장소: https://github.com/CapstoneFincode/Fincode_web_prototype
 - 비공개 웹: https://fincode-security-lab.tinyhawk128.chatgpt.site
+- DB 구조·API·호스팅 연결: [docs/DATABASE.md](docs/DATABASE.md)
 - 인수인계: [docs/HANDOFF.md](docs/HANDOFF.md)
 
 ## 현재 기능과 연결 조건
@@ -14,23 +15,23 @@
 
 [이메일 요약기](https://fincode-security-lab.tinyhawk128.chatgpt.site/#email)에서 연결 상태 확인 → 실제 모델 선택 → 정상 예시 불러오기 또는 본문 입력 → 실제 요약 실행 순으로 사용합니다. 저장된 예시 요약은 별도 버튼이며 실제 생성 결과와 구분합니다. 실제 결과는 입력·모델·프롬프트 버전·사용량과 함께 JSON으로 내보낼 수 있습니다. 브라우저에는 키를 입력하거나 저장하지 않습니다.
 
-기존 데이터 관리, 미실행 공격 계획, 과거 실험 6건의 집계·CSV, JSON 백업 기능은 유지합니다. 공격 반복 실행, 자동 성공 판정, 방어 실행, 공용 DB, 첨부파일 추출·OCR는 아직 구현 전입니다. 파일명 선택은 가능하지만 파일이 있으면 실제 요약을 실행하지 않습니다. 현재 실호출은 **방어 미적용 베이스라인**만 지원합니다.
+DB 설정 시 정상 이메일·공격 시나리오 CRUD, 수정 버전 보관, 자체 공격 반복 실행, 정확 일치 자동 판정·수동 검토, 응답·토큰·시간 기록을 제공합니다. 정상 이메일은 기준 요약 없이 등록할 수 있습니다. 기존 브라우저 계획·메모와 과거 실험 집계도 유지합니다. 보안 방어 실행과 첨부파일 추출·OCR는 구현 전입니다. 파일명 선택은 가능하지만 파일이 있으면 실제 요약을 실행하지 않습니다. 현재 실호출은 **방어 미적용 베이스라인**만 지원합니다.
 
 ## 빠른 실행: Python + Docker
 
 ```bash
-git clone https://github.com/CapstoneFincode/Fincode_web_prototype.git
+git clone --branch database https://github.com/CapstoneFincode/Fincode_web_prototype.git
 cd Fincode_web_prototype
 cp .env.example .env
 ```
 
-Windows PowerShell에서는 마지막 명령 대신 `Copy-Item .env.example .env`를 사용합니다. `.env`의 `BAZE_API_KEY=` 뒤에 **이 게이트웨이에서 발급받은 키**를 입력합니다.
+Windows PowerShell에서는 마지막 명령 대신 `Copy-Item .env.example .env`를 사용합니다. `.env`에 PostgreSQL 시작에 필요한 `POSTGRES_PASSWORD`를 설정하고, `BAZE_API_KEY=` 뒤에 **이 게이트웨이에서 발급받은 키**를 입력합니다.
 
 ```bash
 docker compose up --build -d
 ```
 
-http://localhost:8000 에서 사용합니다. 키 변경 후에는 `docker compose up -d --force-recreate`, 종료는 `docker compose down`입니다. 키가 없어도 UI와 `/api/health`는 작동하며 실제 호출만 503 오류로 안내합니다.
+http://localhost:8000 에서 사용합니다. 키 변경 후에는 `docker compose up -d --force-recreate`, 종료는 `docker compose down`입니다. 키가 없어도 UI·DB 데이터 관리·`/api/health`는 작동하며 실제 모델 호출만 503 오류로 안내합니다. DB migration과 seed는 앱 시작 시 자동 적용됩니다. `docker compose down` 후에도 데이터 볼륨은 유지됩니다.
 
 기본 포트는 `127.0.0.1`에만 열립니다. Docker 버전에는 로그인 기능이 없으므로 외부 공개 시 인증과 사용량 제한을 별도로 구성해야 합니다. 실제 키가 있는 `.env`는 Git과 이미지에 포함되지 않습니다.
 
@@ -43,10 +44,12 @@ python -m venv .venv
 # Linux/macOS: source .venv/bin/activate
 # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+# DB 연결 시 먼저 DATABASE_URL 및 PGPASSWORD를 설정하고 실행:
+python -m backend.migrate
 python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-실행 전에 현재 터미널의 `BAZE_API_KEY` 환경변수를 설정해야 합니다. 일반 uvicorn은 `.env`를 자동으로 읽지 않으며 위 Docker Compose 경로가 `.env`를 사용합니다.
+실행 전에 현재 터미널의 `BAZE_API_KEY`와 DB 연결용 `DATABASE_URL` 환경변수를 설정합니다. DB 미설정이면 migration을 생략하고 기존 단건 요약/브라우저 모드로 사용할 수 있습니다. 일반 uvicorn은 `.env`를 자동으로 읽지 않으며 위 Docker Compose 경로가 `.env`를 사용합니다.
 
 ## API 계약
 
@@ -54,7 +57,12 @@ python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --no-access-log
 | --- | --- |
 | `GET /api/health` | 키 등록 여부와 구현 기능 확인. 유효성 검증이나 모델 호출은 하지 않음 |
 | `GET /api/models` | 게이트웨이의 현재 텍스트 모델 목록. Chat Completions 미지원 Codex 계열 제외 |
-| `POST /api/summarize` | 본문 요약과 실제 usage·latency 반환 |
+| `POST /api/summarize` | 본문 요약과 실제 usage·latency 반환, DB 설정 시 실행 저장 |
+| `/api/data` | 정상 이메일·공격 시나리오 관리 |
+| `/api/experiments` | 자체 실험 등록·진행률·상세 조회 |
+| `POST /api/runs/{id}/evaluations` | 수동 판정 추가 |
+
+변경 메서드·요청 예시는 [DB API 문서](docs/DATABASE.md#api)에 있습니다.
 
 ```json
 {
@@ -72,12 +80,12 @@ python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --no-access-log
 - 최대 출력 예산은 16,384 토큰이며 추론 모델의 내부 추론도 포함될 수 있습니다. 실제 사용량과 최대 예산은 다릅니다.
 - 모델 목록은 최대 20초, 요약은 최대 120초 대기합니다. 자동 재시도하지 않습니다. 취소·타임아웃이 이미 시작된 호출의 처리나 사용량을 취소한다고 보장하지 않습니다.
 - 본문 최대 30,000자, 제목 200자, 요청 200 KB입니다. 원문은 입력 탐지 필터 없이 기본 요약 프롬프트와 함께 보냅니다. 모델 제공자의 자체 정책은 유지됩니다.
-- 실제 실행 시 제목·본문이 BAZE 및 선택 모델 제공자에게 전송됩니다. 앱 서버에는 본문·응답 DB를 만들지 않았습니다. 기존 데이터 관리의 직접 등록 자료는 브라우저에 남습니다.
+- 실제 실행 시 제목·본문이 BAZE 및 선택 모델 제공자에게 전송됩니다. DB 설정 시 원문 스냅샷·응답·측정값을 PostgreSQL에 저장합니다. 기존 브라우저 데이터는 자동 업로드하지 않습니다.
 
 ## 두 실행 환경
 
 1. **팀 개발·Docker:** `backend/app.py`의 Python FastAPI가 `public/`와 API를 함께 제공합니다. Node 설치나 웹 빌드 없이 실행할 수 있습니다.
-2. **현재 비공개 웹:** `server/baze.mjs`의 JavaScript Worker가 같은 API 계약을 제공합니다. 두 환경은 `config/email-baseline.json`의 프롬프트와 설정을 공유합니다. 호스팅에는 Vinext/Cloudflare의 `sites()` 빌드 통합을 유지합니다. 키는 호스팅 서버의 비밀 환경변수로 별도 등록합니다.
+2. **기존 비공개 웹과 호스팅 어댑터:** `server/baze.mjs`의 JavaScript Worker가 같은 API 계약을 제공합니다. 두 환경은 `config/email-baseline.json`의 프롬프트와 설정을 공유합니다. 호스팅에는 Vinext/Cloudflare의 `sites()` 빌드 통합을 유지합니다. 키는 서버의 비밀 환경변수로 등록합니다. DB 모드는 외부 HTTPS Python 백엔드의 `BACKEND_API_URL`·`BACKEND_SHARED_TOKEN`을 Worker에 설정해 같은 DB API로 연결합니다. PostgreSQL과 Python 서버를 별도로 실행해야 하며 이 브랜치 업로드만으로 기존 사이트가 바뀌지는 않습니다.
 
 사이트와 GitHub는 자동 동기화되지 않습니다. 사이트는 기존 소유자 전용이며 GitHub Organization 멤버십과 별개입니다. GitHub Pages 정적 호스팅만으로는 비밀 키가 필요한 서버 API가 실행되지 않습니다.
 
@@ -91,23 +99,17 @@ node --test tests/*.test.mjs
 python -m unittest discover -s backend/tests -v
 ```
 
-모의 게이트웨이 테스트는 요청 매핑, 토큰 누락·빈 응답, 인증 오류, 입력 제한, 미지원 기능, 타임아웃과 UI 상태 전환을 확인합니다. JavaScript 26개와 Python 18개가 통과했습니다. 키를 사용하지 않는 테스트이며 실모델 검증을 대체하지 않습니다. 위 실모델 검증은 비공개 호스팅 API에서 별도로 수행했습니다.
+JavaScript 34개 + Python 29개(실제 DB 통합 11개 포함), 총 63개 통과했습니다. 모델 HTTP는 mock, DB는 PGlite의 PostgreSQL 18.6 엔진/TCP 어댑터로 검사했습니다. DB 통합 테스트는 `FINCODE_TEST_DATABASE_URL`을 폐기 가능한 전용 DB로 지정해야 하며 해당 DB의 실험 테이블을 초기화합니다. 미지정 시 DB 11개는 건너뜁니다.
 
-호스팅 개발 의존성이 설치되어 있으면 아래 workerd 회귀 테스트도 실행할 수 있습니다. 모의 응답만 사용해 실제 런타임의 요청·리디렉션 처리를 검사합니다. 1개가 통과하여 오프라인 테스트는 총 45개입니다. Wrangler/Miniflare가 없으면 이유를 표시하고 건너뜁니다.
-
-```bash
-node --test tests/runtime/baze-runtime.test.mjs
-```
-
-이번 환경에는 지원되는 브라우저 QA 도구와 Docker 엔진이 없어 시각·실제 클릭 검사와 Docker 이미지 실행 검증을 수행하지 못했습니다. Python 서버의 실모델 호출도 별도 검증 전입니다. 빌드·오프라인 검사·호스팅 API 검사의 확인 범위와 구분합니다.
+검증 범위와 테스트 실행법은 [DB 문서](docs/DATABASE.md#검증)에 있습니다. 이번에는 Docker/PostgreSQL 17 컨테이너, 브라우저 실제 클릭, 새 코드의 실모델 호출·라이브 배포를 검증하지 않았습니다. 선택적인 기존 workerd 테스트는 의존성 미설치로 건너뛰었습니다. 위에 기록된 이전 라이브 요약 확인은 이번 DB 통합과 별도입니다.
 
 ## 데이터 해석과 다음 단계
 
 - `public/data.js`의 기존 실험은 **2026-09-30 발표자료의 과거 집계**입니다. 현재 웹에서 재실행한 수치가 아닙니다.
 - DeepSeek 확장 원본 ASR은 30/49 = 61.22%. 팀 이견 4건 제외 시 26/49 = 53.06%는 재검토 추정치입니다.
-- 합성 정상 이메일 5건과 공격 예시 7건은 Ground Truth 완료 수에 포함하지 않습니다. 직접 등록 후 검토 완료 표시한 원문·기준 요약만 목표 100건 진행 수에 포함합니다.
-- 브라우저 데이터는 `fincode-lab-v1`에 저장합니다. 팀 공용 DB가 아니므로 JSON으로 백업하세요.
-- 다음 단계: 정상·공격 소량 실험 → 공용 DB·첨부 추출 → 방어 2종 이상 → ASR/FPR·요약 품질 평가.
+- 합성 정상 이메일 5건과 공격 예시 7건은 정상 라벨 검토 완료 수에 포함하지 않습니다. 직접 등록 후 정상 라벨을 검토한 이메일만 목표 100건 진행 수에 포함하며, 기준 요약은 선택 사항입니다.
+- DB 연결 시 팀 데이터와 실행 기록은 PostgreSQL에 저장됩니다. 미연결 시 브라우저 데이터는 `fincode-lab-v1`에 저장합니다. 계획·메모는 항상 브라우저에 남습니다.
+- 다음 단계: 정상·공격 실데이터 확충 → 방어 2종 이상 구현 → 동일 조건 OFF/ON 실행 → ASR·정상 오차단·시간/토큰 비교. 첨부 추출과 선택 요약 품질 평가는 후속 확장입니다.
 
 ## 공식 연동 자료
 
