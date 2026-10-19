@@ -3,7 +3,8 @@
 ## 최신 상태: 팀 공용 배포 준비
 
 - 사용자 요청으로 기존 Sites + Railway PostgreSQL/Python 구성을 선정했다. [DEPLOYMENT.md](DEPLOYMENT.md)가 배포 절차와 상태의 기준이다.
-- 기존 Sites에 DB UI와 연결 프록시를 게시했다(소스 eff7d6ac1ab9f76f0caeb7b29c2e3b6663f8608d, 배포 appgdep_6ad59a4780248191bead327a0a1ef33b 성공). 환경변수 revision 1은 BAZE_API_KEY만 유지하므로 공용 DB는 아직 미연결이다. GitHub 구현 커밋 4148c7836cd13aa8d95d69c89bf3a915fbf57bdf는 cobas67 계정으로 database 브랜치에 저장했다.
+- 기존 Sites 버전 6에 DB UI와 연결 프록시를 게시했다(소스 3f685c6928bf0447edae5299ec42949d71d0bb01, 배포 appgdep_6ad59b1da6fc819199b728d3b195112d 성공). 환경변수 revision 1은 BAZE_API_KEY만 유지하므로 공용 DB는 아직 미연결이다. GitHub 구현 커밋 4148c7836cd13aa8d95d69c89bf3a915fbf57bdf는 cobas67 계정으로 database 브랜치에 저장했다.
+- 최종 호스팅 확인: `/api/health` 200, BAZE configured=true, database={configured:false,ready:false}; `/api/models` 200/60개; `/` 200. 공용 DB가 아직 없음을 실제 응답으로 확인했다. 첫 게시에는 이전 API 진입점이 남아 있어 소스 전체를 바이트 단위로 대조·동기화한 뒤 버전 6으로 바로잡았다.
 - Railway 설치는 확인했으나 이 대화의 호출 가능 도구 목록에는 Railway 기능이 없어 실제 자원 생성은 대기 중이다. 재설치를 요청하지 말고 도구 제공 상태를 다시 확인한다.
 - `.railway/railway.ts`에 `database` 브랜치 기반 DB/API 구성을 선언했다. 공유 비밀 변수는 실제 값 없이 참조한다. 계정 대상 IaC plan/apply는 아직 실행하지 않았다.
 - 컨테이너는 `PORT`를 따르고, DB 초기화 성공 후 한 개 API 프로세스를 시작한다. 배포 환경에서 DB/인증키 누락은 시작 실패로 처리한다. `/api/ready`는 DB 준비 상태에 따라 200/503을 반환한다.
