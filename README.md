@@ -10,6 +10,10 @@
 
 ## 현재 기능과 연결 조건
 
+**2026-10-19 공용 DB 연결 완료:** Railway PostgreSQL 18·Python 백엔드를 기존 웹에 연결했습니다. 정상 이메일/공격 시나리오 저장·조회·수정·보관과 실제 모델 실행 결과의 DB 재조회를 확인했습니다. [데이터 관리](https://fincode-security-lab.tinyhawk128.chatgpt.site/#data)에서 바로 등록할 수 있습니다. 사이트는 소유자 전용이며 팀원 접근 권한은 별도입니다.
+
+검증용 정상 이메일 1건을 `gemini-3.5-flash-lite`로 실행해 입력 128·출력 61·전체 189토큰, 응답시간 2,263ms와 실제 응답을 저장했습니다. 방어 OFF의 연결 확인이며 보안 효과나 성능 벤치마크가 아닙니다. [실배포 검증 기록](docs/verification/2026-10-19-railway-live.json)을 참고하세요.
+
 실제 서버 API, 모델 목록 조회, 본문 요약, 입력·출력·전체·추론 토큰과 응답시간 표시를 구현했습니다. **유효한 서버 환경변수 `BAZE_API_KEY`가 있어야 실제 모델을 호출할 수 있습니다.** 키 미등록 상태나 모의 응답 테스트 통과를 실모델 성공으로 표시하지 않습니다.
 
 2026-10-14 13:53 KST, 비공개 호스팅 API에서 모델 목록 60개 조회와 `gemini-3.5-flash-lite`의 합성 정상 이메일 `GT-S01` 1건 요약을 확인했습니다. 입력 153·출력 114·전체 267토큰, 응답시간 2,144ms였으며 필수 정보 4개가 포함되었습니다. 추론 토큰은 미제공(`null`)입니다. 단일 호출의 연결 검증이며 전체 모델 검증이나 성능 벤치마크는 아닙니다. [검증 기록](docs/verification/2026-10-14-baze-live.json)을 참고하세요.
@@ -86,7 +90,7 @@ python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --no-access-log
 ## 두 실행 환경
 
 1. **팀 개발·Docker:** `backend/app.py`의 Python FastAPI가 `public/`와 API를 함께 제공합니다. Node 설치나 웹 빌드 없이 실행할 수 있습니다.
-2. **기존 비공개 웹과 호스팅 어댑터:** `server/baze.mjs`의 JavaScript Worker가 같은 API 계약을 제공합니다. 두 환경은 `config/email-baseline.json`의 프롬프트와 설정을 공유합니다. 호스팅에는 Vinext/Cloudflare의 `sites()` 빌드 통합을 유지합니다. 키는 서버의 비밀 환경변수로 등록합니다. DB 모드는 외부 HTTPS Python 백엔드의 `BACKEND_API_URL`·`BACKEND_SHARED_TOKEN`을 Worker에 설정해 같은 DB API로 연결합니다. PostgreSQL과 Python 서버를 별도로 실행해야 하며 이 브랜치 업로드만으로 기존 사이트가 바뀌지는 않습니다.
+2. **기존 비공개 웹과 호스팅 어댑터:** `server/baze.mjs`의 JavaScript Worker가 같은 API 계약을 제공합니다. 두 환경은 `config/email-baseline.json`의 프롬프트와 설정을 공유합니다. 호스팅에는 Vinext/Cloudflare의 `sites()` 빌드 통합을 유지합니다. 키는 서버의 비밀 환경변수로 등록합니다. DB 모드는 외부 HTTPS Python 백엔드의 `BACKEND_API_URL`·`BACKEND_SHARED_TOKEN`을 Worker에 설정해 같은 DB API로 연결합니다. 현재 운영 웹은 Railway PostgreSQL/Python에 연결되어 있습니다. 이후 브랜치 업로드만으로 Sites가 바뀌지는 않습니다. Railway API도 검증한 커밋에 고정되어 있어 명시적으로 소스를 갱신해 배포합니다.
 
 사이트와 GitHub는 자동 동기화되지 않습니다. 사이트는 기존 소유자 전용이며 GitHub Organization 멤버십과 별개입니다. GitHub Pages 정적 호스팅만으로는 비밀 키가 필요한 서버 API가 실행되지 않습니다.
 
@@ -100,9 +104,9 @@ node --test tests/*.test.mjs
 python -m unittest discover -s backend/tests -v
 ```
 
-JavaScript 34개 + Python 29개(실제 DB 통합 11개 포함), 총 63개 통과했습니다. 모델 HTTP는 mock, DB는 PGlite의 PostgreSQL 18.6 엔진/TCP 어댑터로 검사했습니다. DB 통합 테스트는 `FINCODE_TEST_DATABASE_URL`을 폐기 가능한 전용 DB로 지정해야 하며 해당 DB의 실험 테이블을 초기화합니다. 미지정 시 DB 11개는 건너뜁니다.
+배포 준비에서 JavaScript 34개 + Python 34개(실제 DB 통합 11개 포함) + workerd 1개, 총 69개 통과했습니다. 모델 HTTP는 mock, DB는 PGlite의 PostgreSQL 18.6 엔진/TCP 어댑터로 검사했습니다. DB 통합 테스트는 `FINCODE_TEST_DATABASE_URL`을 폐기 가능한 전용 DB로 지정해야 하며 해당 DB의 실험 테이블을 초기화합니다. 미지정 시 DB 11개는 건너뜁니다.
 
-검증 범위와 테스트 실행법은 [DB 문서](docs/DATABASE.md#검증)에 있습니다. 이번에는 Docker/PostgreSQL 17 컨테이너, 브라우저 실제 클릭, 새 코드의 실모델 호출·라이브 배포를 검증하지 않았습니다. 선택적인 기존 workerd 테스트는 의존성 미설치로 건너뛰었습니다. 위에 기록된 이전 라이브 요약 확인은 이번 DB 통합과 별도입니다.
+검증 범위와 테스트 실행법은 [DB 문서](docs/DATABASE.md#검증)에 있습니다. 2026-10-19 Railway에서 실제 Dockerfile 빌드·PostgreSQL 18 배포와 사이트 경유 실모델·DB 저장을 확인했습니다. 로컬 Compose의 PostgreSQL 17 컨테이너와 브라우저 실제 클릭 검증은 미수행입니다.
 
 ## 데이터 해석과 다음 단계
 
