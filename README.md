@@ -5,6 +5,7 @@
 - 팀 저장소: https://github.com/CapstoneFincode/Fincode_web_prototype
 - 비공개 웹: https://fincode-security-lab.tinyhawk128.chatgpt.site
 - DB 구조·API·호스팅 연결: [docs/DATABASE.md](docs/DATABASE.md)
+- 팀 공용 Railway 배포 설정·진행 상태: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - 인수인계: [docs/HANDOFF.md](docs/HANDOFF.md)
 
 ## 현재 기능과 연결 조건

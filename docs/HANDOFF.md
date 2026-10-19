@@ -1,4 +1,16 @@
-# 작업 인수인계 — 2026-10-14
+# 작업 인수인계 — 2026-10-19
+
+## 최신 상태: 팀 공용 배포 준비
+
+- 사용자 요청으로 기존 Sites + Railway PostgreSQL/Python 구성을 선정했다. [DEPLOYMENT.md](DEPLOYMENT.md)가 배포 절차와 상태의 기준이다.
+- Railway 설치는 확인했으나 이 대화의 호출 가능 도구 목록에는 Railway 기능이 없어 실제 자원 생성은 대기 중이다. 재설치를 요청하지 말고 도구 제공 상태를 다시 확인한다.
+- `.railway/railway.ts`에 `database` 브랜치 기반 DB/API 구성을 선언했다. 공유 비밀 변수는 실제 값 없이 참조한다. 계정 대상 IaC plan/apply는 아직 실행하지 않았다.
+- 컨테이너는 `PORT`를 따르고, DB 초기화 성공 후 한 개 API 프로세스를 시작한다. 배포 환경에서 DB/인증키 누락은 시작 실패로 처리한다. `/api/ready`는 DB 준비 상태에 따라 200/503을 반환한다.
+- 검증: JavaScript 34개 + Python 34개(실DB 11개) + workerd 1개, 총 69개 통과. 새 컨테이너 시작 명령을 별도 프로세스로 실행하여 동적 포트, migration/seed, DB readiness, 인증 차단, 정상 데이터 저장·조회도 확인했다. DB는 폐기 가능한 PGlite PostgreSQL이며 모델 요청은 mock이다. Docker 이미지 실행·Railway 계정 대상 plan·실배포는 아직 미검증이다.
+- 사이트와 Railway의 서버 간 인증은 사용자 프롬프트를 검사하는 보안 Gateway가 아니다. 현재 방어 OFF 조건은 유지한다.
+- 기존 사이트는 소유자 전용이다. DB 공용화와 팀원 사이트 접근 권한은 별개이며 대상 계정 확인 전 전체 공개하지 않는다.
+
+---
 
 ## 최신 상태: database 브랜치 DB 연동
 

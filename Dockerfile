@@ -15,7 +15,7 @@ COPY public/ ./public/
 USER fincode
 
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; from backend.deployment import server_port; urllib.request.urlopen('http://127.0.0.1:%s/api/ready' % server_port(), timeout=8)"
 
-CMD ["sh", "-c", "python -m backend.migrate && exec uvicorn backend.app:app --host 0.0.0.0 --port 8000 --no-access-log"]
+CMD ["python", "-m", "backend.start"]

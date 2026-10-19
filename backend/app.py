@@ -18,6 +18,7 @@ import secrets
 from uuid import uuid4
 
 from backend.persistence import Persistence
+from backend.deployment import is_hosted, validate_hosted
 from urllib.parse import urlsplit
 
 import httpx
@@ -157,6 +158,7 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
 
     @asynccontextmanager
     async def lifespan(app):
+        validate_hosted(persistence.db.url if persistence.db else '')
         task = asyncio.create_task(persistence.loop(generate, configured_key)) if persistence.db and run_worker else None
         try:
             yield
@@ -180,9 +182,14 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
     @app.middleware("http")
     async def no_store_api(request: Request, call_next):
         shared_token = os.environ.get('BACKEND_SHARED_TOKEN','')
-        if shared_token and request.url.path.startswith('/api/') and request.url.path != '/api/health':
+        if request.url.path.startswith('/api/') and is_hosted():
+            try:
+                validate_hosted(persistence.db.url if persistence.db else '')
+            except RuntimeError:
+                return JSONResponse({'error':{'code':'BACKEND_NOT_CONFIGURED','message':'서버 배포 설정을 확인해 주세요.'}},status_code=503,headers={'Cache-Control':'no-store'})
+        if shared_token and request.url.path.startswith('/api/') and request.url.path not in {'/api/health','/api/ready'}:
             if not secrets.compare_digest(request.headers.get('X-Fincode-Backend-Token','').encode(),shared_token.encode()):
-                return JSONResponse({'error':{'code':'UNAUTHORIZED','message':'인증된 대시보드에서 접근해 주세요.'}},status_code=401)
+                return JSONResponse({'error':{'code':'UNAUTHORIZED','message':'인증된 대시보드에서 접근해 주세요.'}},status_code=401,headers={'Cache-Control':'no-store'})
         response = await call_next(request)
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
@@ -244,6 +251,12 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             "features": {"summarize": True, "attachments": False, "defenses": False, "experiments": bool(persistence.db)},
             "database": await persistence.health(),
         }
+
+    @app.get('/api/ready')
+    async def ready() -> JSONResponse:
+        database = await persistence.health()
+        available = bool(database.get('ready'))
+        return JSONResponse({'ready': available}, status_code=200 if available else 503)
 
     @app.get("/api/models")
     async def models() -> dict[str, Any]:
