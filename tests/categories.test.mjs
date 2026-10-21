@@ -60,7 +60,7 @@ function app({saved=null,preview=false,elements={},queryLists={},fetcher=()=>{th
     document:{querySelector:s=>s.startsWith('meta[')?preview?{}:null:elements[s]||null,querySelectorAll:s=>queryLists[s]||[],getElementById:id=>elements['#'+id]||null,addEventListener(){}},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#experiments'}});
   vm.runInContext(source+`\nshell=()=>{};renderRuntime=()=>{};toast=(msg)=>toasts.push(msg);refreshJobs=async()=>{};showDatabaseExperiment=async()=>{};
-  globalThis.api={state,pages,validateImport,filteredData,adoptDatabase,persist,refreshConnection,submitDatabaseExperiment,recordForm,savePlan,categorySelectionSummary,bindCategoryPicker,actions};`,context);
+  globalThis.api={state,pages,validateImport,filteredData,adoptDatabase,persist,refreshConnection,submitDatabaseExperiment,recordForm,savePlan,categorySelectionSummary,bindCategoryPicker,bindPage,actions};`,context);
   // Use the context that contains both stubs and state.
   return {api:context.api,writes,toasts};
 }
@@ -95,11 +95,34 @@ test('DB submission sends exact first-registered IDs across categories, fixed re
   a.state.attacks=Array.from({length:101},(_,i)=>row(String(i)));a.state.categoryIds=['instruction-override'];a.state.categoryCounts={'instruction-override':101};await a.submitDatabaseExperiment();assert.equal(calls.length,1);assert.match(elements['#db-submit-error'].textContent,/최대 100개/);
   a.state.categoryCounts['instruction-override']=0;await a.submitDatabaseExperiment();assert.equal(calls.length,1);assert.match(elements['#db-submit-error'].textContent,/정수/);
 });
-test('normal experiment ignores invalid attack counts and sends one call',async()=>{
-  const calls=[];const form={reportValidity:()=>true,dataset:{},values:{name:'Normal run',kind:'normal',model:'test-model',emailId:'email-id'}};
+test('normal experiment ignores invalid attack counts and sends configured repeat with default 1',async()=>{
+  const calls=[];const form={reportValidity:()=>true,dataset:{},values:{name:'Normal run',kind:'normal',model:'test-model',emailId:'email-id',normalRepeat:'1'}};
   const elements={'#db-experiment-form':form,'[data-action="db-run"]':{disabled:false},'#db-submit-error':{textContent:''}};
   const {api:a}=app({elements,fetcher:async(url,options)=>{calls.push(JSON.parse(options.body));return {ok:true,status:202,json:async()=>({id:'experiment'})};}});
   Object.assign(a.state,{dbReady:true,connection:'ready',categoryIds:['instruction-override'],categoryCounts:{'instruction-override':0},attacks:[]});await a.submitDatabaseExperiment();assert.deepEqual(calls[0].scenarioIds,[]);assert.equal(calls[0].kind,'normal');assert.equal(calls[0].repeat,1);
+  assert.equal(a.state.dbNormalRepeat,1);form.values.normalRepeat='10';a.state.dbNormalRepeat='10';await a.submitDatabaseExperiment();assert.equal(calls[1].repeat,10);assert.deepEqual(calls[1].scenarioIds,[]);assert.match(a.categorySelectionSummary(true),/<strong>10<small>회/);
+});
+test('invalid normal repeat values block submission explicitly while attack payload remains repeat 1',async()=>{
+  const calls=[];const form={reportValidity:()=>true,dataset:{},values:{name:'Repeat validation',kind:'normal',model:'test-model',emailId:'email-id',normalRepeat:''}};
+  const error={textContent:''};const {api:a}=app({elements:{'#db-experiment-form':form,'[data-action="db-run"]':{disabled:false},'#db-submit-error':error},fetcher:async(url,options)=>{calls.push(JSON.parse(options.body));return {ok:true,status:202,json:async()=>({id:'experiment'})};}});
+  Object.assign(a.state,{dbReady:true,connection:'ready',categoryIds:['instruction-override'],categoryCounts:{'instruction-override':1},attacks:[row('a')]});
+  for(const value of ['', ' ', '0', '1.5', '11']){form.values.normalRepeat=value;a.state.dbNormalRepeat=value;await a.submitDatabaseExperiment();assert.match(error.textContent,/1~10 사이의 정수/);assert.match(a.categorySelectionSummary(true),/<strong>—<small>회/);}
+  assert.equal(calls.length,0);form.values.kind='attack';await a.submitDatabaseExperiment();assert.equal(calls.length,1);assert.equal(calls[0].repeat,1);assert.deepEqual(calls[0].scenarioIds,['db-a']);
+});
+test('kind toggles preserve normal repeat, category counts and existing name/model/email fields',()=>{
+  const input=value=>({value,listeners:{},addEventListener(name,handler){this.listeners[name]=handler;}});
+  const wrapper=()=>({hidden:false,classList:{toggle(name,value){this.owner.hidden=value;}}});
+  const kind=input('attack'),repeat=input('1'),amount=input('2');amount.dataset={category:'instruction-override'};
+  const name=input('Keep this experiment'),model=input('chosen-model'),email=input('selected-email');
+  const category=wrapper(),normal=wrapper(),policy=wrapper();for(const el of [category,normal,policy])el.classList.owner=el;
+  const summary={innerHTML:''},form={};const elements={'#db-experiment-form':form,'#db-kind':kind,'#db-normal-repeat':repeat,'#db-category-section':category,'#db-normal-repeat-field':normal,'#db-attack-policy':policy,'#db-selection-summary':summary,'#db-submit-error':{textContent:''},'#db-name':name,'#db-model':model,'#db-email':email};
+  const {api:a}=app({elements,queryLists:{'input[name="category-count"]':[amount]}});Object.assign(a.state,{route:'experiments',dbConfigured:true,dbReady:true,categoryIds:['instruction-override'],categoryCounts:{'instruction-override':'2'}});a.bindPage();
+  assert.equal(repeat.disabled,true);assert.equal(normal.hidden,true);assert.equal(amount.disabled,false);
+  kind.value='normal';kind.listeners.change({target:kind});assert.equal(repeat.disabled,false);assert.equal(repeat.required,true);assert.equal(amount.disabled,true);assert.equal(amount.required,false);assert.equal(category.hidden,true);assert.equal(policy.hidden,true);
+  repeat.value='4';repeat.listeners.input({target:repeat});assert.equal(a.state.dbNormalRepeat,'4');assert.match(summary.innerHTML,/<strong>4<small>회/);
+  kind.value='attack';kind.listeners.change({target:kind});assert.equal(repeat.disabled,true);assert.equal(normal.hidden,true);assert.equal(amount.disabled,false);assert.equal(amount.required,true);assert.equal(amount.value,'2');assert.match(summary.innerHTML,/선택된 공격 2건/);
+  kind.value='normal';kind.listeners.change({target:kind});assert.equal(repeat.value,'4');assert.match(summary.innerHTML,/<strong>4<small>회/);assert.equal(a.state.categoryCounts['instruction-override'],'2');
+  assert.equal(elements['#db-experiment-form'],form);assert.equal(name.value,'Keep this experiment');assert.equal(model.value,'chosen-model');assert.equal(email.value,'selected-email');
 });
 test('saved plan freezes counts, category labels, first-registered scenario IDs and contents',()=>{
   const {api:a,writes}=app({elements:{'#plan-title':{value:'Frozen category plan'}}});a.state.categoryIds=['instruction-override'];a.state.categoryCounts['instruction-override']=2;a.savePlan();
@@ -108,9 +131,9 @@ test('saved plan freezes counts, category labels, first-registered scenario IDs 
   a.state.attacks[0].name='Changed';a.state.categoryCounts['instruction-override']=1;assert.notEqual(p.scenarios[0].name,'Changed');assert.equal(p.categorySelections[0].count,2);
   const d=writes.at(-1).value;const next=app({saved:d});assert.equal(next.api.state.plans[0].categorySelections[0].count,2);assert.doesNotThrow(()=>a.validateImport(d));
 });
-test('count inputs replace repeat fields in both experiment modes and remain outside checkbox labels',()=>{
+test('attack count inputs remain separate from the hidden normal-only repeat field',()=>{
   const {api:a}=app();let html=a.pages.experiments();assert.doesNotMatch(html,/(?:id|name)="(?:db-)?repeat"/);assert.match(html,/name="category-count"/);assert.match(html,/<\/label>\s*<div class="category-amount">/);
-  Object.assign(a.state,{dbConfigured:true,dbReady:true});html=a.pages.experiments();assert.doesNotMatch(html,/(?:id|name)="(?:db-)?repeat"/);assert.match(html,/시나리오당 1회 호출/);
+  Object.assign(a.state,{dbConfigured:true,dbReady:true});html=a.pages.experiments();assert.doesNotMatch(html,/(?:id|name)="(?:db-)?repeat"/);assert.match(html,/시나리오당 1회 호출/);assert.match(html,/<div id="db-normal-repeat-field" class="field hidden">/);assert.match(html,/id="db-normal-repeat"[^>]+value="1" disabled/);
 });
 test('DOM count input updates selection, supports prototype-like category IDs, and is disabled for normal mode',()=>{
   const listeners={};const amount={value:'2',dataset:{category:'__proto__'},disabled:false,required:true,addEventListener:(name,fn)=>listeners[name]=fn};

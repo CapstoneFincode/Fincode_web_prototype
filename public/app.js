@@ -39,7 +39,7 @@ function readStore(){try{const d=JSON.parse(localStorage.getItem(STORAGE)||'null
 const saved=readStore();
 const state={route:'overview',group:5,tab:'normal',query:'',filter:'all',resultModel:'all',resultGroup:'all',normal:saved?.normal||structuredClone(normalSeeds),attacks:saved?.attacks||structuredClone(attackSeeds),plans:saved?.plans||[],notes:saved?.notes||[],email:'',emailTitle:'',selectedSample:(saved?.normal||normalSeeds)[0]?.id||'',model:historicalRuns[0].model,defense:'off',files:[],summary:null,attackIds:attackSeeds.slice(0,3).map(x=>x.id)};
 // Local plans/notes and legacy browser datasets remain separate from PostgreSQL records.
-Object.assign(state,{categories:saved?.categories||structuredClone(categorySeeds),categoryIds:['instruction-override','role-spoofing'],categoryCounts:Object.create(null),categoryFilter:'all',categoryQuery:'',dataSort:'default',dbCategorySupport:false,dbKind:'attack'});
+Object.assign(state,{categories:saved?.categories||structuredClone(categorySeeds),categoryIds:['instruction-override','role-spoofing'],categoryCounts:Object.create(null),categoryFilter:'all',categoryQuery:'',dataSort:'default',dbCategorySupport:false,dbKind:'attack',dbNormalRepeat:1});
 const localData={normal:state.normal,attacks:state.attacks,categories:state.categories};
 Object.assign(state,{dbChecked:false,dbConfigured:false,dbReady:false,dbError:"",jobs:[],jobSubmitting:false});
 Object.assign(state,{liveModel:'',models:[],connection:'idle',connectionError:'',configured:false,running:false,emailError:null,lastLiveResult:null});
@@ -129,8 +129,12 @@ function categoryCards(){
     <span class="category-foot" id="count-note-${esc(c.id)}">${c.total===0?'시나리오 등록 예정':c.unsupported?`첨부 경로 ${c.unsupported}건 준비 중`:c.disabled?`비활성 ${c.disabled}건 제외`:'먼저 등록된 순서 · 시나리오당 1회'}</span><p class="category-count-error" id="count-error-${esc(c.id)}" role="status">${esc(issue||'')}</p></div>`;
   }).join('')||'<div class="category-empty">검색한 카테고리가 없어요. 데이터 관리에서 새로 추가할 수 있어요.</div>';
 }
+function normalRepeatSelection(raw=state.dbNormalRepeat){
+  const repeat=typeof raw==='number'||typeof raw==='string'&&raw.trim()!==''?Number(raw):NaN;
+  return {repeat,error:Number.isInteger(repeat)&&repeat>=1&&repeat<=10?'':'정상 이메일 반복 횟수는 1~10 사이의 정수로 입력해 주세요.'};
+}
 function categorySelectionSummary(normal=false){
-  if(normal)return `<div class="selection-total"><span>예정 모델 호출</span><strong>1<small>회</small></strong></div><p class="category-caption">선택한 정상 이메일을 1회 실행해요. 공격 카테고리는 적용하지 않아요.</p>`;
+  if(normal){const {repeat,error}=normalRepeatSelection();return `<div class="selection-total"><span>예정 모델 호출</span><strong>${error?'—':repeat}<small>회</small></strong></div><p class="category-caption">${error?'반복 횟수를 확인해 주세요.':`선택한 정상 이메일을 ${repeat}회 반복 실행해요.`} 공격 카테고리는 적용하지 않아요.</p>${error?`<p class="selection-error" role="status">${esc(error)}</p>`:''}`;}
   const plan=selectionPlan(state.attacks,state.categoryIds,state.categoryCounts);
   const selected=state.categories.filter(c=>state.categoryIds.includes(c.id));
   return `<div class="selected-tags">${selected.map(c=>tag(c.name,'blue')).join('')||'<span class="muted small">왼쪽에서 카테고리를 선택하세요.</span>'}</div>
@@ -187,24 +191,26 @@ function databaseArchive(id){
 }
 function databaseExperimentsPage(){
   if(!state.dbReady)return head('EXPERIMENT BUILDER','공격 실험','DB 연결 후 실험을 실행할 수 있어요.')+databaseNotice();
-  return head('EXPERIMENT BUILDER','카테고리로 구성하는 공격 실험','카테고리별 개수만큼 서로 다른 공격을 선택해 각 1회 실행하고 결과를 DB에 저장해요.',`<a class="btn" href="#data" data-action="manage-attacks">${icon('database')}시나리오 관리</a>`)+connectionPanel()+
-    notice('실행하면 예정 호출 수만큼 <strong>BAZE 모델 사용량이 발생</strong>해요. 현재 보안 방어는 OFF이며, 각 카테고리에서 먼저 등록된 순서로 선택해요.')+
+  return head('EXPERIMENT BUILDER','공격·정상 이메일 실험','공격은 카테고리별로 선택한 시나리오를 각 1회, 정상 이메일은 지정한 횟수만큼 실행해요.',`<a class="btn" href="#data" data-action="manage-attacks">${icon('database')}시나리오 관리</a>`)+connectionPanel()+
+    notice('실행하면 예정 호출 수만큼 <strong>BAZE 모델 사용량이 발생</strong>해요. 현재 보안 방어는 OFF예요. 공격은 먼저 등록된 순서로 선택하고, 정상 이메일은 1~10회 반복할 수 있어요.')+
     `<form id="db-experiment-form"><div class="experiment-grid category-experiment"><div class="experiment-main"><section class="panel"><div class="panel-head"><div><span class="section-kicker">01 / CONFIGURATION</span><h2>실험 기본 설정</h2></div>${tag('DB 저장','green')}</div><div class="body-pad" style="padding-top:5px">
     <div class="field-row"><div class="field"><label for="db-name">실험 이름</label><input id="db-name" name="name" required maxlength="200" placeholder="예: 카테고리별 기준 실험"></div><div class="field"><label for="db-kind">실험 종류</label><select id="db-kind" name="kind"><option value="attack" ${state.dbKind==='attack'?'selected':''}>공격 시나리오</option><option value="normal" ${state.dbKind==='normal'?'selected':''}>정상 이메일 · 응답 거부 확인</option></select></div></div>
-    <div class="field-row"><div class="field"><label for="db-model">호출 모델</label><select id="db-model" name="model" required>${liveModelOptions()}</select></div><div class="field execution-policy"><span class="field-label">실행 방식</span><strong>시나리오당 1회 호출</strong><span class="hint">정상 이메일 실험도 선택한 이메일을 1회 실행해요.</span></div></div>
+    <div class="field-row"><div class="field"><label for="db-model">호출 모델</label><select id="db-model" name="model" required>${liveModelOptions()}</select></div><div id="db-attack-policy" class="field execution-policy ${state.dbKind==='normal'?'hidden':''}"><span class="field-label">공격 실행 방식</span><strong>시나리오당 1회 호출</strong><span class="hint">카테고리별 선택 수의 합계만큼 실행해요.</span></div><div id="db-normal-repeat-field" class="field ${state.dbKind==='normal'?'':'hidden'}"><label for="db-normal-repeat">정상 이메일 반복 횟수</label><input id="db-normal-repeat" name="normalRepeat" type="number" inputmode="numeric" min="1" max="10" step="1" value="${esc(state.dbNormalRepeat)}" ${state.dbKind==='normal'?'required':'disabled'} aria-describedby="db-normal-repeat-help"><span id="db-normal-repeat-help" class="hint">같은 정상 이메일을 1~10회 실행해요. 기본값은 1회예요.</span></div></div>
     <div class="field"><label for="db-email">기준 정상 이메일</label><select id="db-email" name="emailId" required>${state.normal.map(x=>`<option value="${esc(x.dbId)}">${esc(x.title)} · ${x.reviewStatus==='reviewed'?'정상 라벨 검토 완료':x.provenance==='sample'?'합성 예시':'검토 대기'}</option>`).join('')}</select></div><div class="field"><span class="field-label">보안 방어</span><div class="radio-options"><label class="radio-option"><input type="radio" checked disabled>OFF · 기준 환경</label><label class="radio-option is-unavailable"><input type="radio" disabled>ON · 방어 구현 후 지원</label></div></div></div></section>
     <section id="db-category-section" class="panel category-picker-panel ${state.dbKind==='normal'?'hidden':''}">${categoryPicker()}</section></div>
     <section class="panel selection-panel"><div class="panel-head"><div><span class="section-kicker">03 / REVIEW</span><h2>실행 전 확인</h2></div>${tag('실제 모델 호출','amber')}</div><div class="body-pad" style="padding-top:5px"><div id="db-selection-summary">${categorySelectionSummary(state.dbKind==='normal')}</div><p id="db-submit-error" class="error" role="alert"></p><button type="button" class="btn primary full-width" data-action="db-run" ${state.connection!=='ready'||state.jobSubmitting?'disabled':''}>${state.jobSubmitting?'등록 중…':'실제 실험 실행'} ${icon('arrow')}</button><p class="local-note">브라우저를 닫아도 서버에서 실행돼요. 오류가 난 호출은 자동 재시도하지 않아요.</p></div></section></div></form>`+databaseResultsPanel();
 }
 async function submitDatabaseExperiment(){
   if(state.jobSubmitting||!state.dbReady)return;
-  const form=$('#db-experiment-form');if(!form.reportValidity())return;
-  const fields=new FormData(form);const kind=fields.get('kind');
+  const form=$('#db-experiment-form');const fields=new FormData(form);const kind=fields.get('kind');
+  const normalRepeat=kind==='normal'?normalRepeatSelection(fields.get('normalRepeat')):null;
+  if(normalRepeat?.error){$('#db-submit-error').textContent=normalRepeat.error;return;}
+  if(!form.reportValidity())return;
   const plan=selectionPlan(state.attacks,state.categoryIds,state.categoryCounts);
   if(kind==='attack'&&plan.error){$('#db-submit-error').textContent=plan.error;return;}
   const ids=kind==='attack'?plan.runnable.map(a=>a.dbId):[];
   if(ids.some(id=>typeof id!=='string'||!id)){ $('#db-submit-error').textContent='선택한 공격의 DB 정보를 새로고침해 주세요.';return;}
-  const payload={name:fields.get('name').trim(),kind,model:fields.get('model'),emailId:fields.get('emailId'),repeat:1,scenarioIds:ids,defense:'off'};
+  const payload={name:fields.get('name').trim(),kind,model:fields.get('model'),emailId:fields.get('emailId'),repeat:kind==='normal'?normalRepeat.repeat:1,scenarioIds:ids,defense:'off'};
   const fingerprint=JSON.stringify(payload);
   if(form.dataset.fingerprint!==fingerprint){form.dataset.fingerprint=fingerprint;form.dataset.requestKey=crypto.randomUUID();}
   payload.idempotencyKey=form.dataset.requestKey;
@@ -260,7 +266,9 @@ function bindPage(){
     bindCategoryPicker();
     $('#category-query')?.addEventListener('input',e=>{state.categoryQuery=e.target.value;$('#category-grid').innerHTML=categoryCards();bindCategoryPicker();});
 
-    $('#db-kind')?.addEventListener('change',e=>{state.dbKind=e.target.value;$('#db-category-section').classList.toggle('hidden',state.dbKind==='normal');$('#category-grid').innerHTML=categoryCards();bindCategoryPicker();updatePlan();});
+    $('#db-kind')?.addEventListener('change',e=>{state.dbKind=e.target.value;syncExperimentKind();});
+    $('#db-normal-repeat')?.addEventListener('input',e=>{state.dbNormalRepeat=e.target.value;if($('#db-submit-error'))$('#db-submit-error').textContent='';updatePlan();});
+    if(state.dbConfigured&&state.dbReady)syncExperimentKind();
   }
   if(state.route==='data'){
     $('#data-query').addEventListener('input',e=>{state.query=e.target.value;$('#data-table').innerHTML=dataTable();});
@@ -272,6 +280,16 @@ function bindPage(){
     $('#result-model').addEventListener('change',e=>{state.resultModel=e.target.value;$('#result-table').innerHTML=historyTable(filteredResults());});
     $('#result-group').addEventListener('change',e=>{state.resultGroup=e.target.value;$('#result-table').innerHTML=historyTable(filteredResults());});
   }
+}
+function syncExperimentKind(){
+  const normal=state.dbKind==='normal';
+  $('#db-category-section')?.classList.toggle('hidden',normal);
+  $('#db-attack-policy')?.classList.toggle('hidden',normal);
+  $('#db-normal-repeat-field')?.classList.toggle('hidden',!normal);
+  const repeat=$('#db-normal-repeat');if(repeat){repeat.disabled=!normal;repeat.required=normal;}
+  $$('input[name="category-count"]').forEach(el=>{const enabled=!normal&&state.categoryIds.includes(el.dataset.category);el.disabled=!enabled;el.required=enabled;});
+  if($('#db-submit-error'))$('#db-submit-error').textContent='';
+  updatePlan();
 }
 function bindCategoryPicker(){
   $$('input[name="categoryIds"]').forEach(el=>el.addEventListener('change',()=>{
