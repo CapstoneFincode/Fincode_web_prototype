@@ -1,4 +1,6 @@
-# PostgreSQL 연동 · database 브랜치
+# PostgreSQL 연동
+
+> UI 브랜치의 카테고리별 개수 선택을 포함한 소스 기준입니다. 10월 19일 운영 배포 기록과 구분하며 실제 반영 상태는 [UI-CATEGORIES.md](UI-CATEGORIES.md)를 확인하세요.
 
 정상 이메일과 공격 시나리오를 팀 DB에 저장하고, 웹에서 선택한 시나리오를 Python 백엔드가 반복 실행합니다. promptfoo 외부 데이터, 결과 파일, 실행 엔진을 사용하지 않습니다. 정상 이메일의 우선 목적은 **보안 ON에서 정상 입력을 공격으로 오인해 차단하거나 답변을 거부하는지 확인**하는 것입니다. 기준 요약은 필수가 아닙니다.
 
@@ -9,7 +11,7 @@
 ### Docker Compose (팀 기본 경로)
 
 ```bash
-git clone --branch database https://github.com/CapstoneFincode/Fincode_web_prototype.git
+git clone --branch UI https://github.com/CapstoneFincode/Fincode_web_prototype.git
 cd Fincode_web_prototype
 cp .env.example .env
 # .env에 POSTGRES_PASSWORD 설정. 모델 호출에는 BAZE_API_KEY도 설정.
@@ -41,7 +43,7 @@ python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --no-access-log
 ## 웹 사용 흐름
 
 1. **데이터 관리**에서 정상 이메일/공격 시나리오를 등록합니다. 정상 원문과 제목만 필수이며 기준 요약·핵심 정보는 선택입니다. 정상 라벨을 확인한 뒤 검토 완료로 표시합니다. 합성 예시는 목표 100건에 포함하지 않습니다.
-2. **공격 실험**에서 실제 제공 모델, 기준 이메일, 공격 시나리오(최대 10개), 반복(1~10회)을 선택합니다. 정상 실험은 선택한 이메일만 반복하고 공격문을 삽입하지 않습니다. 실행 버튼은 실제 모델 사용량을 발생시킵니다.
+2. **공격 실험**에서 실제 제공 모델, 기준 이메일, 카테고리와 카테고리별 시나리오 개수를 선택합니다. 활성·지원 시나리오를 최초 등록 순서대로 선택해 각 1회 실행합니다(합계 최대 100개). 정상 실험은 선택한 이메일만 1회 실행하며 공격문을 삽입하지 않습니다. 실행 버튼은 실제 모델 사용량을 발생시킵니다.
 3. **웹에서 실행한 DB 실험**에서 진행률·결과를 확인합니다. 서버 작업이므로 브라우저를 닫아도 실행됩니다. 상세 창은 버튼으로 상태를 새로고침합니다.
 4. 응답, 실행 당시 메시지, 모델/설정, 토큰·응답시간, 자동 판정·수동 판정 이력을 확인하거나 실험 JSON으로 내보냅니다. 정상 응답 거부는 수동으로 판정합니다.
 
@@ -53,13 +55,14 @@ python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --no-access-log
 
 ## 테이블 구조
 
-DB 하나의 `fincode` 스키마에 12개 도메인 테이블을 둡니다.
+DB 하나의 `fincode` 스키마에 13개 도메인 테이블을 둡니다.
 
 | 테이블 | 역할 / 현재 연결 범위 |
 | --- | --- |
 | `email_cases` | 정상 이메일 원문·검토 라벨·수정 버전·선택 핵심 정보 |
 | `ground_truths` | 선택 기준 요약·검토 상태. 정상 오차단 평가의 필수 조건 아님 |
-| `attack_scenarios` | 자체 공격문·경로·기법·목표·판정 기준·버전 |
+| `attack_scenarios` | 자체 공격문·경로·기법·목표·판정 기준·카테고리·버전 |
+| `attack_categories` | 공격 카테고리·정규화된 고유 이름·표시 순서 |
 | `experiments` | 실험 묶음·정책·반복 계획·요청 중복 방지 키 |
 | `experiment_cases` | 특정 원문/시나리오 버전·모델·반복·실제 메시지 스냅샷 |
 | `runs` | 실행 상태·최종 응답·오류·시간·OFF/ON 정보·복구용 만료 시각 |
@@ -83,7 +86,8 @@ DB 하나의 `fincode` 스키마에 12개 도메인 테이블을 둡니다.
 | 경로 | 기능 |
 | --- | --- |
 | `GET /api/health` | 모델 키·DB 연결·기능 상태 |
-| `GET /api/data` | 최신 비보관 정상 이메일·공격 시나리오 |
+| `GET /api/data` | 최신 비보관 정상 이메일·공격 시나리오·카테고리. 공격은 원등록 시각 `registeredAt` 순서 |
+| `POST /api/categories` | 새 카테고리 등록 |
 | `POST /api/data/normal` / `attacks` | 새 자료 등록 |
 | `PUT /api/data/{kind}/{logical_id}` | `dbVersion` 확인 후 새 버전 저장 |
 | `DELETE /api/data/{kind}/{logical_id}` | JSON `dbVersion` 확인 후 보관 처리 |
@@ -101,11 +105,13 @@ DB 하나의 `fincode` 스키마에 12개 도메인 테이블을 둡니다.
   "model": "실제 제공 모델 ID",
   "emailId": "정상 이메일의 dbId(UUID)",
   "scenarioIds": ["공격 시나리오의 dbId(UUID)"],
-  "repeat": 3,
+  "repeat": 1,
   "defense": "off",
   "idempotencyKey": "클라이언트가 생성한 요청 UUID"
 }
 ```
+
+공격 시나리오 ID는 중복 없이 1~100개이며 새 UI는 `repeat: 1`을 사용합니다. 이전 클라이언트의 `repeat` 1~10 요청은 지원하되 총 호출 수(시나리오 수 × 반복 수)는 100회를 넘을 수 없습니다. 정상 실험의 UI는 1회 실행하며 기존 API 반복 요청은 유지합니다.
 
 같은 키·입력은 같은 실험을 반환합니다. 같은 키에 다른 입력은 409입니다. 의도적인 새 실험은 새 키를 사용하세요. 단건 요약도 DB 설정 시 실행 기록을 저장하며 키를 지정하면 완료 응답을 재사용합니다. 임의 요약 입력은 검토되지 않은 `unknown` 라벨이므로 정상 거부율 분모에 넣지 않습니다.
 

@@ -37,16 +37,31 @@ export function categoryGroups(categories, attacks){
       disabled:rows.filter(a=>!a.enabled).length,unsupported:rows.filter(a=>a.enabled&&a.channel==='attachment').length};
   });
 }
-export function selectionPlan(attacks,categoryIds,repeat=1,{maxScenarios=10,maxCalls=100}={}){
-  const chosen=new Set(categoryIds);
-  const rows=attacks.filter(a=>chosen.has(categoryFor(a)));
-  const runnable=rows.filter(a=>a.enabled&&a.channel!=='attachment');
+/** Stable original-registration order. Legacy undated rows retain their earlier array order. */
+export function registrationOrder(attacks){
+  return attacks.map((row,index)=>({row,index,time:typeof row.registeredAt==='string'?Date.parse(row.registeredAt):NaN}))
+    .sort((a,b)=>Number.isFinite(a.time)!==Number.isFinite(b.time)?(Number.isFinite(a.time)?1:-1):Number.isFinite(a.time)?a.time-b.time||a.index-b.index:a.index-b.index)
+    .map(item=>item.row);
+}
+export function selectionPlan(attacks,categoryIds,categoryCounts={}, {maxScenarios=100}={}){
+  const chosen=[...new Set(categoryIds)];
+  const seen=new Set();
+  const distinct=attacks.filter((a,index)=>{const id=a.id||a.dbId||index;if(seen.has(id))return false;seen.add(id);return true;});
+  const rows=distinct.filter(a=>chosen.includes(categoryFor(a)));
   const disabled=rows.filter(a=>!a.enabled).length;
   const unsupported=rows.filter(a=>a.enabled&&a.channel==='attachment').length;
-  let error='';
-  if(!Number.isInteger(repeat)||repeat<1||repeat>10)error='반복 횟수는 1~10회로 입력해 주세요.';
-  else if(!runnable.length)error='실행 가능한 공격이 있는 카테고리를 선택해 주세요.';
-  else if(runnable.length>maxScenarios)error=`선택한 공격은 ${runnable.length}건이에요. 현재 한 실험은 최대 ${maxScenarios}건까지 지원해요. 카테고리를 나누어 선택해 주세요.`;
-  else if(runnable.length*repeat>maxCalls)error=`한 실험의 호출 수는 최대 ${maxCalls}회예요. 반복 횟수를 줄여 주세요.`;
-  return {rows,runnable,disabled,unsupported,calls:runnable.length*repeat,error};
+  const byCategory=chosen.map(id=>{
+    const eligible=registrationOrder(rows.filter(a=>categoryFor(a)===id&&a.enabled&&a.channel!=='attachment'));
+    const raw=Object.hasOwn(categoryCounts,id)?categoryCounts[id]:1;
+    const count=typeof raw==='number'||typeof raw==='string'&&raw.trim()!==''?Number(raw):NaN;
+    let error='';
+    if(!Number.isInteger(count)||count<1)error='선택할 시나리오 수는 1 이상의 정수로 입력해 주세요.';
+    else if(count>eligible.length)error=`선택한 수 ${count}건이 실행 가능한 ${eligible.length}건보다 많아요.`;
+    return {id,count,available:eligible.length,error,selected:error?[]:eligible.slice(0,count)};
+  });
+  const runnable=byCategory.flatMap(c=>c.selected);
+  let error=byCategory.find(c=>c.error)?.error||'';
+  if(!chosen.length)error='실험할 공격 카테고리를 선택해 주세요.';
+  else if(!error&&runnable.length>maxScenarios)error=`총 ${runnable.length}건을 선택했어요. 한 실험은 최대 ${maxScenarios}개 시나리오까지 지원해요. 카테고리별 개수를 줄여 주세요.`;
+  return {rows,runnable,disabled,unsupported,byCategory,calls:runnable.length,error};
 }

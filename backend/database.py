@@ -85,15 +85,17 @@ class Database:
                 (SELECT DISTINCT ON (case_key) * FROM email_cases ORDER BY case_key,revision DESC) e
                 LEFT JOIN LATERAL (SELECT * FROM ground_truths WHERE email_case_id=e.id ORDER BY revision DESC LIMIT 1) g ON true
                 WHERE e.archived_at IS NULL ORDER BY e.created_at, e.case_key''').fetchall()
-            attacks = conn.execute('''SELECT * FROM (SELECT DISTINCT ON (scenario_key) * FROM attack_scenarios
-                ORDER BY scenario_key,revision DESC) a WHERE archived_at IS NULL ORDER BY created_at,scenario_key''').fetchall()
+            attacks = conn.execute('''SELECT * FROM (SELECT DISTINCT ON (scenario_key) a.*,
+                min(created_at) OVER (PARTITION BY scenario_key) AS registered_at
+                FROM attack_scenarios a ORDER BY scenario_key,revision DESC) a
+                WHERE archived_at IS NULL ORDER BY registered_at,scenario_key''').fetchall()
             categories = conn.execute('SELECT id,name FROM attack_categories ORDER BY sort_order,name,id').fetchall()
         return {'categories': [dict(id=r['id'], name=r['name']) for r in categories],
                 'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
                     reference=r['reference_summary'] or '', requiredFacts=r['quality_facts'] or [], reviewStatus=r['label_review_status'],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in normal],
                 'attacks': [dict(id=r['scenario_key'], dbId=str(r['id']), dbVersion=r['revision'], name=r['name'], vector=r['vector'],
-                    categoryId=r['category_id'],
+                    categoryId=r['category_id'], registeredAt=r['registered_at'].astimezone(timezone.utc).isoformat().replace('+00:00','Z'),
                     channel={'user_instruction':'input','email_body':'email','attachment_text':'attachment','image_ocr':'attachment'}[r['channel']],
                     technique=r['technique'], goal=r['goal'], payload=r['payload'], criterion=r['success_criterion']['description'],
                     expectedOutput=r['success_criterion'].get('expectedOutput',''), enabled=r['enabled'],
@@ -195,7 +197,7 @@ class Database:
         if prior:
             if prior['submission_sha256'] != fingerprint:
                 raise DataError('같은 요청 키에 다른 입력이 사용되었습니다.',409,'IDEMPOTENCY_CONFLICT')
-            r=conn.execute('SELECT r.id,r.status,r.response_payload FROM runs r JOIN experiment_cases c ON c.id=r.experiment_case_id WHERE c.experiment_id=%s ORDER BY r.created_at LIMIT 1',(prior['id'],)).fetchone()
+            r=conn.execute('SELECT r.id,r.status,r.response_payload FROM runs r JOIN experiment_cases c ON c.id=r.experiment_case_id WHERE c.experiment_id=%s ORDER BY c.case_number,c.repeat_index,r.id LIMIT 1',(prior['id'],)).fetchone()
             return {'id':str(prior['id']), 'runId':str(r['id']), 'existing':True, 'status':r['status'], 'response':r['response_payload']}
         eid=str(uuid4())
         now=datetime.now(timezone.utc)
@@ -256,8 +258,10 @@ class Database:
                 inputs=[(email,None,'normal')]
             elif kind=='attack':
                 ids=data.get('scenarioIds')
-                if not isinstance(ids,list) or not 1<=len(ids)<=10 or any(not isinstance(i,str) for i in ids) or len(set(ids))!=len(ids):
-                    raise DataError('서로 다른 공격 시나리오를 1~10개 선택해 주세요.')
+                if not isinstance(ids,list) or not 1<=len(ids)<=100 or any(not isinstance(i,str) for i in ids) or len(set(ids))!=len(ids):
+                    raise DataError('서로 다른 공격 시나리오를 1~100개 선택해 주세요.')
+                if len(ids)*repeat > 100:
+                    raise DataError('한 실험의 전체 모델 호출은 최대 100회입니다. 선택 개수 또는 반복 횟수를 줄여 주세요.')
                 inputs=[]
                 for identifier in ids:
                     a=conn.execute('SELECT * FROM attack_scenarios WHERE id=%s AND archived_at IS NULL AND enabled',(uuid(identifier),)).fetchone()
@@ -281,7 +285,12 @@ class Database:
             for row in expired:
                 conn.execute("UPDATE llm_calls SET status='timed_out',error_code='WORKER_INTERRUPTED',completed_at=now() WHERE run_id=%s AND status='sent'",(row['id'],))
             self._refresh_status(conn)
-            row=conn.execute("SELECT r.id FROM runs r WHERE r.status='queued' ORDER BY r.created_at,r.id FOR UPDATE SKIP LOCKED LIMIT 1").fetchone()
+            row=conn.execute('''SELECT r.id FROM runs r
+                JOIN experiment_cases c ON c.id=r.experiment_case_id
+                JOIN experiments e ON e.id=c.experiment_id
+                WHERE r.status='queued'
+                ORDER BY e.created_at,e.id,c.case_number,c.repeat_index,r.id
+                FOR UPDATE OF r SKIP LOCKED LIMIT 1''').fetchone()
             if not row:
                 return None
             rid=str(row['id'])
