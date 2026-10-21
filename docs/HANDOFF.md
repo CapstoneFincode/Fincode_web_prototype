@@ -1,6 +1,52 @@
-# 작업 인수인계 — 2026-10-14
+# 작업 인수인계 — 2026-10-19
 
-## 최신 상태: 실제 이메일 요약 연동 및 호스팅 API 검증 완료
+## 최신 상태: Railway 실배포 및 기존 사이트 DB 연결 완료
+
+이 절과 [DEPLOYMENT.md](DEPLOYMENT.md)를 이전 기록보다 우선한다.
+
+- Railway 계정 `cobas67`의 `fincode-team` 프로젝트(`59ec5ab2-d868-4807-8a67-38608120960f`) / production(`f018ba7f-23ca-4f37-98a5-70a0e44ab38d`)에 실제 배포했다. 플러그인 도구 사용 가능하며 이전 도구 부재 문제는 해소됐다.
+- `Postgres`와 `fincode-api` 모두 SUCCESS. 같은 `iad` 리전, 복제본 각 1개, 서비스별 CPU 1·메모리 500MB 상한, 휴면 OFF. DB는 PostgreSQL 18, 500MB 영구 볼륨, 공개 도메인/TCP 프록시 없음.
+- API: https://fincode-api-production.up.railway.app. GitHub `database` 커밋 `152311baa3c7d36e08dc54cb1704bfb0ac763f48`에 고정. 배포 `c557c7b6-00b2-463c-837a-20f6bd28facf` SUCCESS. 후속 문서 커밋을 자동 배포하지 않는다.
+- 기존 Sites 버전 6을 서버 환경 revision 2로 재배포했다. 배포 `appgdep_6ad59d9fbd188191a44c4b7926a904e7` succeeded. BACKEND_API_URL·비밀 BACKEND_SHARED_TOKEN 연결 완료. 기존 BAZE_API_KEY 유지. 소유자 전용 접근 정책 유지.
+- 라이브 health: database configured/ready true, 모델 목록 60개, 초기 정상 예시 5개/공격 예시 7개. 백엔드 인증 없는 데이터 요청 401, 인증 요청 200.
+- 실제 사이트 경유 정상 이메일 생성·새 클라이언트 조회·수정 버전 2·보관, 자체 공격 시나리오 생성·조회·보관을 검증했다. 검증 자료는 합성 입력이며 정상 라벨 완료 수에 포함하지 않았다.
+- 실험 `3016b396-4ef6-4709-a3e0-d45a8b51777b`, run `6b14d0b9-e9d6-444b-9f02-3826d4b26a41`: 실제 서버 큐에서 normal/OFF/1회 실행 succeeded. gemini-3.5-flash-lite, 입력 128·출력 61·전체 189토큰, 추론 null, 2,263ms. 결과/호출 1건의 DB 재조회 확인. [검증 기록](verification/2026-10-19-railway-live.json). 단일 연결 확인이며 벤치마크나 보안 ON 측정이 아니다.
+- GitHub 쓰기는 cobas67 계정의 database 브랜치. main은 변경하지 않는다. 비밀 값은 Railway/Sites에만 보관한다. IaC 참고 선언은 실제 서비스 이름으로 수정했으나 적용 도구로 쓰지 않았다. IaC 전환 시 운영 설정을 먼저 가져오고 계획을 검토한다.
+- 기존 69개 회귀 검사에 더해 실제 Railway Dockerfile 빌드·PostgreSQL 18·API·실모델·DB 저장 검증 완료. 로컬 PostgreSQL 17 Compose와 브라우저 클릭 검증은 미수행.
+- 팀원 사이트/관리자 초대는 대상 계정 확인 후 진행한다. 아직 소유자만 웹에 접근한다. 자동 백업/복원 검증, 보안 방어 ON, OCR, 개인별 쿼터는 후속 범위다. 요금제 변경은 하지 않았으며 잔여 크레딧/청구액은 조회되지 않았다.
+
+---
+
+## 이전 상태: 팀 공용 배포 준비
+
+- 사용자 요청으로 기존 Sites + Railway PostgreSQL/Python 구성을 선정했다. [DEPLOYMENT.md](DEPLOYMENT.md)가 배포 절차와 상태의 기준이다.
+- 기존 Sites 버전 6에 DB UI와 연결 프록시를 게시했다(소스 3f685c6928bf0447edae5299ec42949d71d0bb01, 배포 appgdep_6ad59b1da6fc819199b728d3b195112d 성공). 환경변수 revision 1은 BAZE_API_KEY만 유지하므로 공용 DB는 아직 미연결이다. GitHub 구현 커밋 4148c7836cd13aa8d95d69c89bf3a915fbf57bdf는 cobas67 계정으로 database 브랜치에 저장했다.
+- 최종 호스팅 확인: `/api/health` 200, BAZE configured=true, database={configured:false,ready:false}; `/api/models` 200/60개; `/` 200. 공용 DB가 아직 없음을 실제 응답으로 확인했다. 첫 게시에는 이전 API 진입점이 남아 있어 소스 전체를 바이트 단위로 대조·동기화한 뒤 버전 6으로 바로잡았다.
+- Railway 설치는 확인했으나 이 대화의 호출 가능 도구 목록에는 Railway 기능이 없어 실제 자원 생성은 대기 중이다. 재설치를 요청하지 말고 도구 제공 상태를 다시 확인한다.
+- `.railway/railway.ts`에 `database` 브랜치 기반 DB/API 구성을 선언했다. 공유 비밀 변수는 실제 값 없이 참조한다. 계정 대상 IaC plan/apply는 아직 실행하지 않았다.
+- 컨테이너는 `PORT`를 따르고, DB 초기화 성공 후 한 개 API 프로세스를 시작한다. 배포 환경에서 DB/인증키 누락은 시작 실패로 처리한다. `/api/ready`는 DB 준비 상태에 따라 200/503을 반환한다.
+- 검증: JavaScript 34개 + Python 34개(실DB 11개) + workerd 1개, 총 69개 통과. 새 컨테이너 시작 명령을 별도 프로세스로 실행하여 동적 포트, migration/seed, DB readiness, 인증 차단, 정상 데이터 저장·조회도 확인했다. DB는 폐기 가능한 PGlite PostgreSQL이며 모델 요청은 mock이다. Docker 이미지 실행·Railway 계정 대상 plan·실배포는 아직 미검증이다.
+- 사이트와 Railway의 서버 간 인증은 사용자 프롬프트를 검사하는 보안 Gateway가 아니다. 현재 방어 OFF 조건은 유지한다.
+- 기존 사이트는 소유자 전용이다. DB 공용화와 팀원 사이트 접근 권한은 별개이며 대상 계정 확인 전 전체 공개하지 않는다.
+
+---
+
+## 이전 상태: database 브랜치 DB 연동
+
+최신 사용자 요구는 cobas67 계정으로 현재 프로젝트에 DB 코드를 연동해 소문자 `database` 브랜치에 올리는 것이다. 이 절과 [DATABASE.md](DATABASE.md)를 아래 이전 기록보다 우선한다.
+
+- PostgreSQL migration 2개, 12개 도메인 테이블·2개 뷰, migration 이력 테이블을 연결했다. Docker Compose는 DB를 함께 시작하고 앱 시작 시 migration/seed를 적용한다.
+- 정상 이메일의 목적은 보안 ON의 정상 입력 오차단/응답 거부 확인이다. 기준 요약은 선택이며 정상 라벨 검토만으로 목표 100건에 포함할 수 있다. 합성 예시는 제외한다.
+- promptfoo 데이터나 실행 엔진에 의존하지 않는다. 자체 DB 시나리오를 웹에서 선택하고 백엔드가 반복 실행한다. 직접 입력과 이메일 본문 삽입 경로를 지원한다.
+- 모델 호출 전 스냅샷과 실행을 저장하고, 응답·실제 사용량·시간·오류·자동/수동 판정을 저장한다. 서버 작업 큐, 중복 키, 버전 충돌 감지, 중단된 작업 만료 복구가 있다. 호출 자동 재시도는 없다.
+- 실험 상세에서 정상 응답 거부 여부를 수동 판정한다. OFF 실행에 보안 Gateway 원인을 지정하지 못한다. ON/OFF 비교 구조만 준비되어 있으며 방어 ON 및 첨부 추출은 미구현이다.
+- Worker는 설정된 외부 HTTPS Python 백엔드로 `/api/*`를 전달할 수 있다. 이 작업은 GitHub 브랜치 변경이며 기존 Sites 앱을 새로 배포하거나 외부 DB/백엔드를 생성하지 않는다.
+- JS 34개 + Python 29개(실DB 11개), 총 63개 검사 통과. DB 엔진은 PGlite PostgreSQL 18.6이며 모델 HTTP만 mock이다. Docker/PG17 컨테이너, 브라우저 클릭, 새 코드 실모델·라이브 배포는 미검증이다.
+- 실행·API·백업·검증 재현은 DATABASE.md를 따른다. DB 통합 테스트는 폐기 가능한 테스트 DB의 실험 테이블을 초기화한다.
+
+---
+
+## 이전 상태: 실제 이메일 요약 연동 및 호스팅 API 검증 완료
 
 사용자가 10월 14일 17시 지도교수 미팅을 위해 UI보다 실제 요약 연동을 우선하도록 요청했다. 아래 10월 12일 기록보다 이 절과 최신 README를 우선한다.
 

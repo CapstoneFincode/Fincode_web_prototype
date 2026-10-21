@@ -11,3 +11,6 @@ backend/**/__pycache__/
 backend/**/.pytest_cache/
 backend/**/*.pyc
 backend/tests/
+
+!database/
+!database/**

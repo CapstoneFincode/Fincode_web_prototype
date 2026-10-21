@@ -12,8 +12,9 @@
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "check": "node --check public/app.js && node --check public/data.js && node --check server/baze.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "check": "node --check public/app.js && node --check public/data.js && node --check server/baze.mjs && node --check server/backend-proxy.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "db:migrate": "python -m backend.migrate"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

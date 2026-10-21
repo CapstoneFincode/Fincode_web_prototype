@@ -36,7 +36,7 @@ class APITest(unittest.IsolatedAsyncioTestCase):
             self.upstream_calls.append(request)
             return handler(request) if handler else httpx.Response(200, json=completion())
 
-        app = create_app(api_key=key, upstream_transport=httpx.MockTransport(record))
+        app = create_app(database_url="",api_key=key, upstream_transport=httpx.MockTransport(record))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             return await client.request(method, path, **kwargs)
 
@@ -49,7 +49,8 @@ class APITest(unittest.IsolatedAsyncioTestCase):
                     "configured": configured,
                     "provider": "baze",
                     "promptVersion": CONFIG["version"],
-                    "features": {"summarize": True, "attachments": False, "defenses": False},
+                    "features": {"summarize": True, "attachments": False, "defenses": False, "experiments": False},
+                    "database": {"configured": False,"ready":False},
                 })
                 self.assertEqual(result.headers["cache-control"], "no-store")
                 self.assertNotIn("test-key", result.text)
