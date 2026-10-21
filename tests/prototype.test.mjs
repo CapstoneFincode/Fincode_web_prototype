@@ -4,14 +4,16 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import * as seeds from '../public/data.js';
+import * as categoryTools from '../public/categories.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
-  .replace(/^import[^\n]+\n/, 'const { historicalRuns, attackSeeds, normalSeeds, historicalTypes } = seeds;\n')
+  .replace(/^import[^\n]+\n/gm, '')
+  .replace(/^/, 'const { historicalRuns, attackSeeds, normalSeeds, historicalTypes } = seeds; const { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, selectionPlan } = categoryTools;\n')
   .replace('export function validateImport','function validateImport')
   .replace(/route\(\);\s*refreshConnection\(\);\s*$/, '');
 function app(saved=null,fetcher=()=>{throw new Error('Unexpected API request');}){
   const listeners={};
-  const context=vm.createContext({seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,fetch:fetcher,
+  const context=vm.createContext({categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,fetch:fetcher,
     localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem(){}},
     document:{addEventListener:(name,handler)=>listeners[name]=handler,querySelector:()=>null,querySelectorAll:()=>[]},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#overview'},listeners});

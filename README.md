@@ -1,5 +1,7 @@
 # 핀코드 · LLM Security Lab
 
+> **UI 브랜치 · 2026-10-21:** 공격 카테고리 선택·필터·등록 개선판입니다. [검토용 프로토타입](https://fincode-ui-categories.tinyhawk128.chatgpt.site)과 [변경·DB 적용 안내](docs/UI-CATEGORIES.md)를 참고하세요. 검토용 화면은 브라우저에만 저장하며 모델을 호출하지 않습니다. 아래 운영 배포 기록은 10월 19일 기준입니다.
+
 한림대학교 캡스톤디자인 **LLM 프롬프트 인젝션 공격·방어 실험 플랫폼**입니다. 이 `database` 브랜치는 PostgreSQL 데이터 관리와 자체 공격 실행·결과 저장을 연결합니다. BAZE/HAI-GPT로 모델을 호출하며 현재 실행 방어는 OFF입니다.
 
 - 팀 저장소: https://github.com/CapstoneFincode/Fincode_web_prototype

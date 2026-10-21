@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
+import unicodedata
 from pathlib import Path
 from uuid import UUID, uuid4
 import psycopg
@@ -30,6 +31,16 @@ def uuid(value):
         raise DataError('데이터 ID 형식을 확인해 주세요.') from None
 
 
+def category_name(value):
+    """Canonical display/key pair; Unicode and spacing variants are duplicates."""
+    if not isinstance(value, str):
+        raise DataError('카테고리 이름은 1~60자로 입력해 주세요.')
+    name = ' '.join(unicodedata.normalize('NFKC', value).split())
+    if not name or len(name) > 60 or any(unicodedata.category(c).startswith('C') for c in name):
+        raise DataError('카테고리 이름은 1~60자로 입력해 주세요.')
+    return name, name.casefold()
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -54,6 +65,7 @@ class Database:
     def health(self):
         with self.connect() as conn:
             conn.execute('SELECT response_payload,lease_expires_at FROM runs LIMIT 0')
+            conn.execute('SELECT category_id FROM attack_scenarios LIMIT 0')
         return {'configured': True, 'ready': True, 'engine': 'postgresql'}
 
     def seed(self):
@@ -75,14 +87,29 @@ class Database:
                 WHERE e.archived_at IS NULL ORDER BY e.created_at, e.case_key''').fetchall()
             attacks = conn.execute('''SELECT * FROM (SELECT DISTINCT ON (scenario_key) * FROM attack_scenarios
                 ORDER BY scenario_key,revision DESC) a WHERE archived_at IS NULL ORDER BY created_at,scenario_key''').fetchall()
-        return {'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
+            categories = conn.execute('SELECT id,name FROM attack_categories ORDER BY sort_order,name,id').fetchall()
+        return {'categories': [dict(id=r['id'], name=r['name']) for r in categories],
+                'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
                     reference=r['reference_summary'] or '', requiredFacts=r['quality_facts'] or [], reviewStatus=r['label_review_status'],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in normal],
                 'attacks': [dict(id=r['scenario_key'], dbId=str(r['id']), dbVersion=r['revision'], name=r['name'], vector=r['vector'],
+                    categoryId=r['category_id'],
                     channel={'user_instruction':'input','email_body':'email','attachment_text':'attachment','image_ocr':'attachment'}[r['channel']],
                     technique=r['technique'], goal=r['goal'], payload=r['payload'], criterion=r['success_criterion']['description'],
                     expectedOutput=r['success_criterion'].get('expectedOutput',''), enabled=r['enabled'],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in attacks]}
+
+    def create_category(self, data):
+        if not isinstance(data, dict):
+            raise DataError('JSON 객체를 보내 주세요.')
+        name, normalized = category_name(data.get('name'))
+        with self.connect() as conn:
+            created = conn.execute('''INSERT INTO attack_categories (id,name,normalized_name,created_by)
+                VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id''',
+                ('CAT-' + str(uuid4()), name, normalized, self.actor)).fetchone()
+        if not created:
+            raise DataError('같은 이름의 카테고리가 이미 있습니다.',409,'CATEGORY_EXISTS') from None
+        return self.datasets()
 
     def _save(self, conn, kind, data, key, revision=1, sample=False):
         identifier = str(uuid4())
@@ -106,6 +133,9 @@ class Database:
                 insert(conn,'ground_truths',dict(id=str(uuid4()), email_case_id=identifier, revision=1, reference_summary=ref,
                     required_facts=facts, review_status='sample' if sample else 'draft', created_by=self.actor))
         elif kind == 'attacks':
+            category_id = text(data.get('categoryId', 'uncategorized'), '카테고리', 80)
+            if not conn.execute('SELECT id FROM attack_categories WHERE id=%s', (category_id,)).fetchone():
+                raise DataError('등록된 카테고리를 선택해 주세요.',400,'UNKNOWN_CATEGORY')
             vector, channel = data.get('vector'), data.get('channel')
             if vector not in ('direct','indirect') or channel not in ('input','email','attachment') or (vector=='direct') != (channel=='input'):
                 raise DataError('직접 공격은 사용자 입력, 간접 공격은 이메일 또는 첨부파일 경로를 선택해 주세요.')
@@ -113,7 +143,7 @@ class Database:
             if type(enabled) is not bool:
                 raise DataError('활성화 여부를 확인해 주세요.')
             expected = text(data.get('expectedOutput',''),'정확히 일치할 응답',2000,False)
-            insert(conn,'attack_scenarios',dict(**common, scenario_key=key, name=text(data.get('name'),'이름',200), vector=vector,
+            insert(conn,'attack_scenarios',dict(**common, scenario_key=key, category_id=category_id, name=text(data.get('name'),'이름',200), vector=vector,
                 channel={'input':'user_instruction','email':'email_body','attachment':'attachment_text'}[channel],
                 technique=text(data.get('technique'),'기법',200), goal=text(data.get('goal'),'목표',200), payload=text(data.get('payload'),'공격문'),
                 success_criterion={'description':text(data.get('criterion'),'판정 기준'), 'expectedOutput':expected,
@@ -140,6 +170,8 @@ class Database:
                     raise DataError('예시는 복사해서 수정하고, 보관된 자료는 새로 등록해 주세요.',409,'VERSION_CONFLICT')
                 if type(data.get('dbVersion')) is not int or data['dbVersion'] != current['revision']:
                     raise DataError('다른 사용자가 수정했습니다. DB를 새로고침해 주세요.',409,'VERSION_CONFLICT')
+                if kind == 'attacks' and 'categoryId' not in data:
+                    data = {**data, 'categoryId': current['category_id']}
             self._save(conn,kind,data,key,1 if not current else current['revision']+1)
         return self.datasets()
 
@@ -183,7 +215,8 @@ class Database:
                     else:
                         messages[1]['content']+='\n\n'+scenario['payload']
                 snapshot={'email':{'subject':subject,'body':body},'messages':messages,'injectionStrategy':'separate-user-message' if scenario and scenario['vector']=='direct' else 'append-email-body' if scenario else 'none',
-                    'successCriterion':scenario['success_criterion'] if scenario else None}
+                    'successCriterion':scenario['success_criterion'] if scenario else None,
+                    'attackCategoryId':scenario['category_id'] if scenario else None}
                 cid,rid=str(uuid4()),str(uuid4())
                 first_run=first_run or rid
                 insert(conn,'experiment_cases',dict(id=cid,experiment_id=eid,case_number=number,repeat_index=repeat,expected_label=label,
