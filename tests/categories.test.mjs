@@ -86,6 +86,23 @@ test('preview mode never requests health/models and uses isolated browser storag
   let calls=0;const {api:a,writes}=app({preview:true,fetcher:()=>{calls++;throw Error('network');}});await a.refreshConnection();a.persist();
   assert.equal(calls,0);assert.equal(a.state.dbChecked,true);assert.equal(a.state.dbReady,false);assert.equal(writes.at(-1).key,'fincode-ui-categories-preview-v1');assert.match(a.pages.experiments(),/실제 모델을 호출하지/);
 });
+test('static preview toggles normal repeat and attack settings without API calls or fake DB state',async()=>{
+  const input=value=>({value,listeners:{},addEventListener(name,handler){this.listeners[name]=handler;}});
+  const wrapper=()=>{const el={hidden:false};el.classList={toggle(name,value){el.hidden=value;}};return el;};
+  const kind=input('attack'),repeat=input('1'),amount=input('2');amount.dataset={category:'instruction-override'};
+  const summary={innerHTML:''},category=wrapper(),attackConfig=wrapper(),normalConfig=wrapper(),planActions=wrapper(),normalActions=wrapper();
+  const elements={'#db-kind':kind,'#db-normal-repeat':repeat,'#db-normal-repeat-field':wrapper(),'#db-category-section':category,'#preview-attack-config':attackConfig,'#preview-normal-config':normalConfig,'#preview-plan-actions':planActions,'#preview-normal-actions':normalActions,'#plan-summary':summary,'#plan-title':input('Preview attack plan'),'#experiment-model':input('model'),'#experiment-defense':input('off'),'#preview-normal-email':input('email')};
+  let calls=0;const {api:a,writes,toasts}=app({preview:true,elements,queryLists:{'input[name="category-count"]':[amount]},fetcher:()=>{calls++;throw Error('Unexpected network');}});
+  await a.refreshConnection();Object.assign(a.state,{route:'experiments',categoryIds:['instruction-override'],categoryCounts:{'instruction-override':'2'}});a.bindPage();
+  assert.match(a.pages.experiments(),/실험 종류 · UI 검토용/);assert.match(a.pages.experiments(),/name="normalRepeat"/);assert.doesNotMatch(a.pages.experiments(),/data-action="db-run"/);assert.equal(normalConfig.hidden,true);assert.equal(amount.disabled,false);
+  kind.value='normal';kind.listeners.change({target:kind});assert.equal(normalConfig.hidden,false);assert.equal(attackConfig.hidden,true);assert.equal(category.hidden,true);assert.equal(planActions.hidden,true);assert.equal(normalActions.hidden,false);assert.equal(repeat.disabled,false);assert.equal(amount.disabled,true);
+  repeat.value='7';repeat.listeners.input({target:repeat});assert.match(summary.innerHTML,/<strong>7<small>회/);assert.match(a.pages.experiments(),/disabled>실제 실행은 API·DB 연결 후 지원/);
+  repeat.value='0';repeat.listeners.input({target:repeat});assert.match(summary.innerHTML,/1~10 사이의 정수/);assert.match(summary.innerHTML,/<strong>—<small>회/);
+  repeat.value='7';repeat.listeners.input({target:repeat});await a.submitDatabaseExperiment();a.savePlan();assert.equal(a.state.plans.length,0);assert.match(toasts.at(-1),/설정만 확인/);
+  kind.value='attack';kind.listeners.change({target:kind});assert.equal(normalConfig.hidden,true);assert.equal(planActions.hidden,false);assert.equal(amount.disabled,false);assert.equal(amount.value,'2');assert.equal(a.state.dbNormalRepeat,'7');a.savePlan();assert.equal(a.state.plans[0].repeat,1);assert.equal(a.state.plans[0].scenarios.length,2);assert.equal(writes.at(-1).key,'fincode-ui-categories-preview-v1');
+  assert.equal(calls,0);assert.equal(a.state.dbReady,false);assert.equal(a.state.dbConfigured,false);assert.equal(a.state.connection,'idle');
+  assert.doesNotMatch(app().api.pages.experiments(),/실험 종류 · UI 검토용|name="normalRepeat"/);
+});
 test('DB submission sends exact first-registered IDs across categories, fixed repeat 1, and blocks invalid totals',async()=>{
   const calls=[];const form={reportValidity:()=>true,dataset:{},values:{name:'Category run',kind:'attack',model:'test-model',emailId:'email-id'}};
   const elements={'#db-experiment-form':form,'[data-action="db-run"]':{disabled:false},'#db-submit-error':{textContent:''}};
