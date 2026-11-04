@@ -1,13 +1,15 @@
 /** Pure category catalog and experiment selection rules shared by UI and tests. */
 export const categorySeeds = [
-  {id:'system-prompt-leak',name:'시스템 프롬프트 유출'},
-  {id:'instruction-override',name:'지시 덮어쓰기'},
-  {id:'role-spoofing',name:'역할·권한 사칭'},
-  {id:'special-token',name:'특수 토큰 인젝션'},
-  {id:'hidden-text',name:'비가시 문자 은닉'},
-  {id:'attachment-injection',name:'첨부 콘텐츠 주입'},
-  {id:'uncategorized',name:'미분류'},
+  {id:'system-prompt-leak',name:'시스템 프롬프트 유출',scope:'both'},
+  {id:'instruction-override',name:'지시 덮어쓰기',scope:'both'},
+  {id:'role-spoofing',name:'역할·권한 사칭',scope:'both'},
+  {id:'special-token',name:'특수 토큰 인젝션',scope:'both'},
+  {id:'hidden-text',name:'비가시 문자 은닉',scope:'both'},
+  {id:'attachment-injection',name:'첨부 콘텐츠 주입',scope:'indirect'},
+  {id:'uncategorized',name:'미분류',scope:'both'},
 ];
+export const categoryScopes = ['direct','indirect','both'];
+export const categoryScope = category => category.scope===undefined?(category.id==='attachment-injection'?'indirect':'both'):category.scope;
 export const categoryNameKey = value => value.normalize('NFKC').trim().replace(/\s+/gu,' ').toLocaleLowerCase('ko');
 export const categoryFor = attack => attack.categoryId || 'uncategorized';
 export function normalizeCategoryData(categories, attacks){
@@ -20,9 +22,11 @@ export function normalizeCategoryData(categories, attacks){
     if(!normalized||normalized.length>60||/\p{C}/u.test(normalized))throw Error('카테고리 이름은 표시 가능한 1~60자여야 해요.');
     const key=categoryNameKey(normalized);
     if(ids.has(item.id)||names.has(key))throw Error('중복된 카테고리가 있어요.');
-    ids.add(item.id);names.add(key);item.name=normalized;
+    const scope=categoryScope(item);
+    if(!categoryScopes.includes(scope)||(item.id==='uncategorized'&&scope!=='both'))throw Error('카테고리 적용 경로를 확인해 주세요. 미분류는 공통으로 유지해 주세요.');
+    ids.add(item.id);names.add(key);item.name=normalized;item.scope=scope;
   }
-  if(!ids.has('uncategorized')){if(catalog.length>=1000)throw Error('카테고리는 미분류를 포함해 최대 1,000개까지 지원해요.');if(names.has(categoryNameKey('미분류')))throw Error('미분류는 기본 카테고리 이름이에요.');catalog.push({id:'uncategorized',name:'미분류'});ids.add('uncategorized');}
+  if(!ids.has('uncategorized')){if(catalog.length>=1000)throw Error('카테고리는 미분류를 포함해 최대 1,000개까지 지원해요.');if(names.has(categoryNameKey('미분류')))throw Error('미분류는 기본 카테고리 이름이에요.');catalog.push({id:'uncategorized',name:'미분류',scope:'both'});ids.add('uncategorized');}
   const rows=attacks.map(item=>{
     const categoryId=categoryFor(item);
     if(!ids.has(categoryId))throw Error('시나리오의 카테고리가 목록에 없어요. 카테고리를 포함한 백업을 사용해 주세요.');
@@ -36,6 +40,15 @@ export function categoryGroups(categories, attacks){
     return {...category,rows,total:rows.length,runnable:rows.filter(a=>a.enabled&&a.channel!=='attachment').length,
       disabled:rows.filter(a=>!a.enabled).length,unsupported:rows.filter(a=>a.enabled&&a.channel==='attachment').length};
   });
+}
+/** Scope controls empty placeholders; actual records always retain their own path. */
+export function categoryLayout(categories,attacks,vectorIds){
+  const vectors=attackVectors.filter(v=>vectorIds.includes(v));
+  const totals=new Map(categoryGroups(categories,attacks).map(c=>[c.id,c.total]));
+  const common=vectors.length?categories.filter(c=>c.id!=='uncategorized'&&categoryScope(c)==='both'&&!totals.get(c.id)):[];
+  const commonIds=new Set(common.map(c=>c.id));
+  return {common,vectors:vectors.map(vector=>({vector,categories:categoryGroups(categories,attacks.filter(a=>a.vector===vector)).filter(c=>
+    c.total>0 || c.id!=='uncategorized'&&!commonIds.has(c.id)&&(categoryScope(c)==='both'||categoryScope(c)===vector))}))};
 }
 /** Stable original-registration order. Legacy undated rows retain their earlier array order. */
 export function registrationOrder(attacks){

@@ -1,6 +1,6 @@
 # PostgreSQL 연동
 
-> UI 브랜치의 카테고리별 개수 선택을 포함한 소스 기준입니다. 10월 19일 운영 배포 기록과 구분하며 실제 반영 상태는 [UI-CATEGORIES.md](UI-CATEGORIES.md)를 확인하세요.
+> main 통합 소스 기준입니다. 실제 배포 상태는 [HANDOFF.md](HANDOFF.md)의 최신 기록을 확인하세요.
 
 정상 이메일과 공격 시나리오를 팀 DB에 저장하고, 웹에서 선택한 시나리오를 Python 백엔드가 반복 실행합니다. promptfoo 외부 데이터, 결과 파일, 실행 엔진을 사용하지 않습니다. 정상 이메일의 우선 목적은 **보안 ON에서 정상 입력을 공격으로 오인해 차단하거나 답변을 거부하는지 확인**하는 것입니다. 기준 요약은 필수가 아닙니다.
 
@@ -11,7 +11,7 @@
 ### Docker Compose (팀 기본 경로)
 
 ```bash
-git clone --branch UI https://github.com/CapstoneFincode/Fincode_web_prototype.git
+git clone --branch main https://github.com/CapstoneFincode/Fincode_web_prototype.git
 cd Fincode_web_prototype
 cp .env.example .env
 # .env에 POSTGRES_PASSWORD 설정. 모델 호출에는 BAZE_API_KEY도 설정.

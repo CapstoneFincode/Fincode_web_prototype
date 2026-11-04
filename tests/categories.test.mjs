@@ -49,7 +49,7 @@ test('catalog rejects unknown references, duplicates, format controls, and norma
 });
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm,'')
-  .replace(/^/,'const { historicalRuns, attackSeeds, normalSeeds, historicalTypes }=seeds; const { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan }=categoryTools;\n')
+  .replace(/^/,'const { historicalRuns, attackSeeds, normalSeeds, historicalTypes }=seeds; const { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, categoryScopes, categoryScope, categoryLayout, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan }=categoryTools;\n')
   .replace('export function validateImport','function validateImport')
   .replace(/route\(\);\s*refreshConnection\(\);\s*$/,'');
 function app({saved=null,preview=false,cryptoApi=webcrypto,elements={},queryLists={},fetcher=()=>{throw Error('Unexpected network');}}={}){
@@ -60,7 +60,7 @@ function app({saved=null,preview=false,cryptoApi=webcrypto,elements={},queryList
     document:{querySelector:s=>s.startsWith('meta[')?preview?{}:null:elements[s]||null,querySelectorAll:s=>queryLists[s]||[],getElementById:id=>elements['#'+id]||null,addEventListener(){}},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#experiments'}});
   vm.runInContext(source+`\nshell=()=>{};renderRuntime=()=>{};toast=(msg)=>toasts.push(msg);refreshJobs=async()=>{};showDatabaseExperiment=async()=>{};
-  state.vectorIds=['direct'];globalThis.api={state,bindVectorPicker,currentAttackPlan,pages,validateImport,filteredData,adoptDatabase,persist,refreshConnection,submitDatabaseExperiment,recordForm,savePlan,categorySelectionSummary,bindCategoryPicker,bindPage,actions};`,context);
+  state.vectorIds=['direct'];globalThis.api={state,bindVectorPicker,currentAttackPlan,categoryCards,categoryForm,categoryScopeForm,pages,validateImport,filteredData,adoptDatabase,persist,refreshConnection,submitDatabaseExperiment,recordForm,savePlan,categorySelectionSummary,bindCategoryPicker,bindPage,actions};`,context);
   // Use the context that contains both stubs and state.
   return {api:context.api,writes,toasts};
 }
@@ -229,4 +229,93 @@ test('HTTP preview saves plans using getRandomValues when randomUUID is unavaila
   assert.equal(ids[1],'01010101-0101-4101-8101-010101010101');
   for(const id of ids)assert.match(id,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.doesNotThrow(()=>a.validateImport(writes.at(-1).value));
+});
+
+test('category scopes normalize legacy catalogs and reject invalid or narrowed uncategorized scopes',()=>{
+  const legacy=categorySeeds.map(({scope,...c})=>c);legacy.push({id:'legacy-custom',name:'이전 사용자 분류'});
+  const restored=normalizeCategoryData(legacy,[]);
+  assert.equal(restored.categories.find(c=>c.id==='attachment-injection').scope,'indirect');
+  assert.equal(restored.categories.find(c=>c.id==='legacy-custom').scope,'both');
+  for(const scope of [null,'',false,'email'])assert.throws(()=>normalizeCategoryData([{id:'bad',name:'잘못된 경로',scope}],[]));
+  assert.throws(()=>normalizeCategoryData([{id:'uncategorized',name:'미분류',scope:'direct'}],[]));
+  assert.equal(normalizeCategoryData([{id:'custom',name:'직접 분류',scope:'direct'}],[]).categories[0].scope,'direct');
+});
+test('empty scope layout shows common placeholders once and only relevant path-specific placeholders',()=>{
+  const catalog=[...categorySeeds,{id:'direct-only',name:'직접 빈 분류',scope:'direct'},{id:'indirect-only',name:'간접 빈 분류',scope:'indirect'}];
+  const layout=categoryTools.categoryLayout(catalog,[],['direct','indirect']);
+  assert.equal(layout.common.length,5);assert.ok(layout.common.every(c=>c.scope==='both'&&c.id!=='uncategorized'));
+  assert.deepEqual(layout.vectors[0].categories.map(c=>c.id),['direct-only']);
+  assert.deepEqual(layout.vectors[1].categories.map(c=>c.id),['attachment-injection','indirect-only']);
+  const direct=categoryTools.categoryLayout(catalog,[],['direct']);assert.equal(direct.common.length,5);assert.equal(direct.vectors.length,1);
+  assert.deepEqual(categoryTools.categoryLayout(catalog,[],[]),{common:[],vectors:[]});
+});
+test('scope never hides existing opposite-path, disabled, attachment or uncategorized scenarios',()=>{
+  const catalog=[...categorySeeds,{id:'declared-direct',name:'기존 데이터 보존',scope:'direct'}];
+  const attacks=[row('opposite',{categoryId:'declared-direct',vector:'indirect',channel:'email'}),row('disabled',{categoryId:'hidden-text',enabled:false}),row('file',{categoryId:'attachment-injection',vector:'indirect',channel:'attachment'}),row('legacy',{categoryId:'uncategorized'})];
+  const layout=categoryTools.categoryLayout(catalog,attacks,['direct','indirect']);
+  assert.equal(layout.vectors[1].categories.find(c=>c.id==='declared-direct').runnable,1);
+  assert.equal(layout.vectors[0].categories.find(c=>c.id==='hidden-text').disabled,1);
+  assert.equal(layout.vectors[1].categories.find(c=>c.id==='attachment-injection').unsupported,1);
+  assert.equal(layout.vectors[0].categories.find(c=>c.id==='uncategorized').total,1);
+  assert.equal(layout.vectors[1].categories.some(c=>c.id==='uncategorized'),false);
+  assert.deepEqual(categoryTools.vectorSelectionPlan(attacks,['indirect'],['indirect:declared-direct']).runnable.map(x=>x.id),['opposite']);
+});
+test('experiment HTML renders empty common categories once and scopes attachment placeholders correctly',()=>{
+  const {api:a}=app();a.state.vectorIds=['direct','indirect'];a.state.attacks=[];a.state.categoryIds=[];
+  const html=a.categoryCards();
+  assert.equal((html.match(/data-empty-category-id="system-prompt-leak"/g)||[]).length,1);
+  assert.match(html,/공통 준비 중 카테고리/);assert.doesNotMatch(html,/value="direct:attachment-injection"/);assert.match(html,/value="indirect:attachment-injection"/);
+  assert.doesNotMatch(html,/uncategorized/);
+  a.state.vectorIds=['direct'];assert.doesNotMatch(a.categoryCards(),/attachment-injection/);
+  a.state.vectorIds=[];assert.doesNotMatch(a.categoryCards(),/공통 준비 중/);
+});
+test('custom-only reload and emptied common categories cannot leave hidden selected keys blocking execution',()=>{
+  const d=backup();d.attacks=[row('custom-row',{categoryId:'custom',provenance:'user'})];d.categories=[{id:'custom',name:'직접 사용자 분류',scope:'direct'}];
+  const {api:a}=app({saved:d});a.currentAttackPlan();assert.deepEqual(Array.from(a.state.categoryIds),[]);
+  a.state.categoryIds=['direct:custom'];assert.equal(a.currentAttackPlan().calls,1);
+  a.state.categories.find(c=>c.id==='custom').scope='both';a.state.categoryCounts['direct:custom']=4;a.state.attacks=[];
+  a.categoryCards();assert.deepEqual(Array.from(a.state.categoryIds),[]);assert.equal(a.state.categoryCounts['direct:custom'],4);
+});
+function categoryFormElements(scope='both'){
+  const input=value=>({value,disabled:false,textContent:'',listeners:{},addEventListener(name,fn){this.listeners[name]=fn;}});
+  const modal={open:false,innerHTML:'',showModal(){this.open=true;},close(){this.open=false;}};
+  return {'#modal':modal,'#category-name':input('새 빈 카테고리'),'#category-scope':input(scope),'#category-error':input(''),'#category-submit':input(''),'#category-form':input(''),'#category-scope-form':input(''),'#scope-category':input('instruction-override'),'#category-scope-hint':input('')};
+}
+test('category create and scope edit persist locally without changing scenarios or saved plans',async()=>{
+  const elements=categoryFormElements('indirect'),{api:a,writes}=app({elements});a.state.dbChecked=true;
+  const before=JSON.stringify(a.state.attacks);a.categoryForm();await elements['#category-form'].listeners.submit({preventDefault(){}});
+  const created=a.state.categories.at(-1);assert.equal(created.scope,'indirect');assert.equal(writes.at(-1).value.categories.at(-1).scope,'indirect');
+  a.state.categoryFilter='instruction-override';a.state.plans=[{id:'old',categories:[{id:'instruction-override',name:'지시 덮어쓰기',scope:'both'}]}];
+  const planBefore=JSON.stringify(a.state.plans);a.categoryScopeForm();elements['#category-scope'].value='direct';await elements['#category-scope-form'].listeners.submit({preventDefault(){}});
+  assert.equal(a.state.categories.find(c=>c.id==='instruction-override').scope,'direct');assert.equal(JSON.stringify(a.state.attacks),before);assert.equal(JSON.stringify(a.state.plans),planBefore);
+  const reloaded=app({saved:{...backup(),categories:structuredClone(a.state.categories)}});assert.equal(reloaded.api.state.categories.find(c=>c.id===created.id).scope,'indirect');
+  a.categoryScopeForm();elements['#scope-category'].value='uncategorized';elements['#scope-category'].listeners.change();assert.equal(elements['#category-scope'].disabled,true);assert.equal(elements['#category-submit'].disabled,true);
+});
+test('old category APIs cannot silently discard scope assignments',()=>{
+  const elements=categoryFormElements(),{api:a,toasts}=app({elements});Object.assign(a.state,{dbChecked:true,dbConfigured:true,dbReady:true,tab:'attacks'});
+  a.adoptDatabase({normal:[],attacks:[],categories:categorySeeds.map(({scope,...c})=>c)});
+  assert.equal(a.state.dbCategorySupport,true);assert.equal(a.state.dbCategoryScopeSupport,false);
+  a.categoryForm();a.categoryScopeForm();assert.equal(elements['#modal'].open,false);assert.match(toasts.at(-1),/백엔드로 업데이트/);assert.match(a.pages.data(),/적용 경로 저장은 백엔드 업데이트/);
+});
+test('scope API edit carries expected scope and refreshes a conflict before a deliberate retry',async()=>{
+  const elements=categoryFormElements(),calls=[];const dataset=backup();let first=true;
+  const {api:a}=app({elements,fetcher:async(url,options)=>{
+    calls.push({url,method:options.method,payload:options.body&&JSON.parse(options.body)});
+    if(options.method==='PUT'&&first){first=false;dataset.categories.find(c=>c.id==='instruction-override').scope='indirect';return {ok:false,status:409,json:async()=>({error:{code:'VERSION_CONFLICT',message:'다른 사용자가 적용 경로를 변경했어요.'}})};}
+    if(options.method==='PUT')dataset.categories.find(c=>c.id==='instruction-override').scope=JSON.parse(options.body).scope;
+    return {ok:true,status:200,json:async()=>structuredClone(dataset)};
+  }});
+  Object.assign(a.state,{dbChecked:true,dbConfigured:true,dbReady:true});a.adoptDatabase(dataset);a.categoryScopeForm();elements['#category-scope'].value='direct';
+  await elements['#category-scope-form'].listeners.submit({preventDefault(){}});
+  assert.deepEqual(calls[0].payload,{scope:'direct',expectedScope:'both'});assert.equal(calls[1].method,'GET');assert.equal(elements['#modal'].open,true);assert.match(elements['#category-error'].textContent,/다른 사용자가/);assert.equal(elements['#category-scope'].value,'indirect');
+  elements['#category-scope'].value='both';await elements['#category-scope-form'].listeners.submit({preventDefault(){}});
+  assert.deepEqual(calls[2].payload,{scope:'both',expectedScope:'indirect'});assert.equal(a.state.categories.find(c=>c.id==='instruction-override').scope,'both');assert.equal(elements['#modal'].open,false);
+});
+test('creating a DB category includes the chosen scope and verifies it in the returned catalog',async()=>{
+  const elements=categoryFormElements('indirect'),calls=[],dataset=backup();
+  const {api:a}=app({elements,fetcher:async(url,options)=>{
+    const payload=JSON.parse(options.body);calls.push({url,payload});dataset.categories.push({id:'new-category',...payload});return {ok:true,status:201,json:async()=>dataset};
+  }});
+  Object.assign(a.state,{dbChecked:true,dbConfigured:true,dbReady:true});a.adoptDatabase(dataset);a.categoryForm();await elements['#category-form'].listeners.submit({preventDefault(){}});
+  assert.deepEqual(calls,[{url:'/api/categories',payload:{name:'새 빈 카테고리',scope:'indirect'}}]);assert.equal(a.state.categories.find(c=>c.id==='new-category').scope,'indirect');assert.equal(a.state.categoryFilter,'new-category');assert.equal(elements['#modal'].open,false);
 });

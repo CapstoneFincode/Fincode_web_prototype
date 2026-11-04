@@ -1,8 +1,8 @@
 # 핀코드 · LLM Security Lab
 
-> **UI 브랜치 · 2026-11-04:** 공격 실험에서 직접·간접 경로를 먼저 선택하고, 각 경로 안에서 카테고리별 시나리오 개수를 정하도록 개선했습니다. 경로별 소계·비율·전체 예정 호출 수와 선택 목록을 확인할 수 있습니다. 각 경로·카테고리에서 등록 순으로 선택해 각각 1회 실행하며 정상 이메일의 별도 1~10회 반복 설정도 유지합니다. [검토용 프로토타입](https://fincode-ui-categories.xogus090721.chatgpt.site)과 [변경·DB 적용 안내](docs/UI-CATEGORIES.md)를 참고하세요. 검토용 웹은 브라우저에만 저장하며 모델을 호출하지 않습니다. main 병합과 운영 반영은 보류하며, 아래 운영 배포 기록은 10월 19일 기준입니다.
+> **2026-11-04 main 통합:** 직접·간접 공격별 카테고리 선택과 정상 이메일 반복 설정을 통합합니다. 빈 카테고리의 적용 경로를 저장하고 공통 준비 중 항목은 한 번만 표시합니다. 이후 개발 기준은 `main`입니다. [현재 배포 상태와 인수인계](docs/HANDOFF.md)를 먼저 확인하세요.
 
-한림대학교 캡스톤디자인 **LLM 프롬프트 인젝션 공격·방어 실험 플랫폼**입니다. 이 `database` 브랜치는 PostgreSQL 데이터 관리와 자체 공격 실행·결과 저장을 연결합니다. BAZE/HAI-GPT로 모델을 호출하며 현재 실행 방어는 OFF입니다.
+한림대학교 캡스톤디자인 **LLM 프롬프트 인젝션 공격·방어 실험 플랫폼**입니다. `main` 브랜치는 PostgreSQL 데이터 관리와 자체 공격 실행·결과 저장을 연결합니다. BAZE/HAI-GPT로 모델을 호출하며 현재 실행 방어는 OFF입니다.
 
 - 팀 저장소: https://github.com/CapstoneFincode/Fincode_web_prototype
 - 비공개 웹: https://fincode-security-lab.tinyhawk128.chatgpt.site
@@ -27,7 +27,7 @@ DB 설정 시 정상 이메일·공격 시나리오 CRUD, 수정 버전 보관, 
 ## 빠른 실행: Python + Docker
 
 ```bash
-git clone --branch database https://github.com/CapstoneFincode/Fincode_web_prototype.git
+git clone --branch main https://github.com/CapstoneFincode/Fincode_web_prototype.git
 cd Fincode_web_prototype
 cp .env.example .env
 ```

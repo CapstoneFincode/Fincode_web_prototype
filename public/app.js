@@ -1,5 +1,5 @@
 import { historicalRuns, attackSeeds, normalSeeds, historicalTypes } from './data.js';
-import { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan } from './categories.js';
+import { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, categoryScopes, categoryScope, categoryLayout, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan } from './categories.js';
 
 const $ = (s, root=document) => root.querySelector(s);
 const $$ = (s, root=document) => [...root.querySelectorAll(s)];
@@ -47,7 +47,7 @@ function readStore(){try{const d=JSON.parse(localStorage.getItem(STORAGE)||'null
 const saved=readStore();
 const state={route:'overview',group:5,tab:'normal',query:'',filter:'all',resultModel:'all',resultGroup:'all',normal:saved?.normal||structuredClone(normalSeeds),attacks:saved?.attacks||structuredClone(attackSeeds),plans:saved?.plans||[],notes:saved?.notes||[],email:'',emailTitle:'',selectedSample:(saved?.normal||normalSeeds)[0]?.id||'',model:historicalRuns[0].model,defense:'off',files:[],summary:null,attackIds:attackSeeds.slice(0,3).map(x=>x.id)};
 // Local plans/notes and legacy browser datasets remain separate from PostgreSQL records.
-Object.assign(state,{categories:saved?.categories||structuredClone(categorySeeds),vectorIds:['direct','indirect'],categoryIds:['direct:instruction-override','direct:role-spoofing','indirect:instruction-override','indirect:role-spoofing'],categoryCounts:Object.create(null),categoryFilter:'all',categoryQuery:'',dataSort:'default',dbCategorySupport:false,dbKind:'attack',dbNormalRepeat:1});
+Object.assign(state,{categories:saved?.categories||structuredClone(categorySeeds),vectorIds:['direct','indirect'],categoryIds:['direct:instruction-override','direct:role-spoofing','indirect:instruction-override','indirect:role-spoofing'],categoryCounts:Object.create(null),categoryFilter:'all',categoryQuery:'',dataSort:'default',dbCategorySupport:false,dbCategoryScopeSupport:false,dbKind:'attack',dbNormalRepeat:1});
 const localData={normal:state.normal,attacks:state.attacks,categories:state.categories};
 Object.assign(state,{dbChecked:false,dbConfigured:false,dbReady:false,dbError:"",jobs:[],jobSubmitting:false});
 Object.assign(state,{liveModel:'',models:[],connection:'idle',connectionError:'',configured:false,running:false,emailError:null,lastLiveResult:null});
@@ -120,8 +120,15 @@ function syncSubmitButton(){const button=$('#summarize-button');if(button)button
 function invalidateEmailResult(){state.summary=null;state.emailError=null;refreshSummaryPanel();}
 function fileList(){return state.files.map((f,i)=>`<div class="file-chip">${icon('file')}${esc(f.name)} <span class="muted">${(f.size/1024).toFixed(0)} KB · 내용 미추출</span><button data-action="remove-file" data-index="${i}" ${state.running?'disabled':''} aria-label="${esc(f.name)} 제거">×</button></div>`).join('');}
 function categoryName(id){return state.categories.find(c=>c.id===id)?.name||'미분류';}
+const categoryScopeName=scope=>({direct:'기본 경로 · 직접',indirect:'기본 경로 · 간접',both:'직접·간접 공통'}[scope]||'직접·간접 공통');
+const categoryScopeOptions=selected=>categoryScopes.map(scope=>`<option value="${scope}" ${scope===selected?'selected':''}>${categoryScopeName(scope)}</option>`).join('');
 function attackPathName(vector){return vector==='direct'?'직접 공격':'간접 공격';}
-function currentAttackPlan(){return vectorSelectionPlan(state.attacks,state.vectorIds,state.categoryIds,state.categoryCounts);}
+function reconcileCategorySelection(){
+  const layout=categoryLayout(state.categories,state.attacks,attackVectors);
+  const visible=new Set(layout.vectors.flatMap(p=>p.categories.map(c=>vectorCategoryKey(p.vector,c.id))));
+  state.categoryIds=state.categoryIds.filter(key=>visible.has(key));
+}
+function currentAttackPlan(){reconcileCategorySelection();return vectorSelectionPlan(state.attacks,state.vectorIds,state.categoryIds,state.categoryCounts);}
 function categoryPicker(){
   return `<div class="category-picker-head"><div><span class="section-kicker">02 / ATTACK PATHS</span><h2>어떤 경로로 공격할까요?</h2><p>직접·간접 공격을 선택한 뒤, 경로별 카테고리와 실행 개수를 정하세요.</p></div></div>
     <div class="vector-picker" role="group" aria-label="실험할 공격 경로">${attackVectors.map(vector=>{const rows=state.attacks.filter(a=>a.vector===vector),available=rows.filter(a=>a.enabled&&a.channel!=='attachment').length;return `<label class="vector-choice ${vector} ${state.vectorIds.includes(vector)?'active':''}"><input type="checkbox" name="attack-vector" value="${vector}" ${state.vectorIds.includes(vector)?'checked':''}><span class="vector-choice-top"><span class="vector-symbol">${icon(vector==='direct'?'code':'mail')}</span><span class="vector-indicator">${icon('check')}</span></span><strong>${attackPathName(vector)}</strong><span>${vector==='direct'?'사용자 입력에 공격 지시를 직접 전달':'이메일 등 외부 콘텐츠에 공격 지시 삽입'}</span><small>실행 가능 <b>${available}</b>건 · 전체 ${rows.length}건</small></label>`;}).join('')}</div>
@@ -131,20 +138,24 @@ function categoryPicker(){
     <p class="category-caption">각 경로·카테고리 안에서 먼저 등록된 시나리오를 선택해요. 비활성 공격과 첨부파일 경로는 실행에서 제외돼요.</p>`;
 }
 function categoryCards(){
-  const plan=currentAttackPlan();
-  return attackVectors.filter(v=>state.vectorIds.includes(v)).map(vector=>{
-    const groups=categoryGroups(state.categories,state.attacks.filter(a=>a.vector===vector)).filter(c=>c.name.toLocaleLowerCase().includes(state.categoryQuery.trim().toLocaleLowerCase()));
+  const plan=currentAttackPlan(),layout=categoryLayout(state.categories,state.attacks,state.vectorIds);
+  const matches=c=>c.name.toLocaleLowerCase().includes(state.categoryQuery.trim().toLocaleLowerCase());
+  if(!layout.vectors.length)return '<div class="category-empty">위에서 실험할 공격 경로를 선택해 주세요.</div>';
+  const paths=layout.vectors.map(({vector,categories})=>{
+    const groups=categories.filter(matches);
     const header=`<section class="vector-category-group ${vector}" aria-label="${attackPathName(vector)} 카테고리"><div class="vector-group-heading"><div><span class="vector-dot"></span><h3>${attackPathName(vector)}</h3><span>카테고리별 개수 선택</span></div><button type="button" class="btn text" data-action="select-all-categories" data-vector="${vector}">전체 선택 / 해제</button></div><div class="category-grid">`;
     const renderCard=c=>{
     const key=vectorCategoryKey(vector,c.id),selected=state.categoryIds.includes(key),count=Object.hasOwn(state.categoryCounts,key)?state.categoryCounts[key]:1;
     const issue=plan.byCategory.find(x=>x.key===key)?.error;
-    return `<div class="category-card ${selected?'selected':''} ${!c.runnable?'unavailable':''}"><label class="category-choice"><input type="checkbox" name="categoryIds" value="${esc(key)}" ${selected?'checked':''} ${!c.runnable&&!selected?'disabled':''} aria-label="${attackPathName(vector)} · ${esc(c.name)}"><span class="category-card-top"><span class="category-glyph">${icon(c.id==='system-prompt-leak'?'lock':c.id==='special-token'?'code':c.id==='hidden-text'?'search':c.id==='attachment-injection'?'file':'layers')}</span><span class="category-check">${icon('check')}</span></span><strong>${esc(c.name)}</strong><span class="category-count"><b>${c.runnable}</b> 실행 가능 <span>전체 ${c.total}건</span></span></label>
+    return `<div class="category-card ${selected?'selected':''} ${!c.runnable?'unavailable':''}"><label class="category-choice"><input type="checkbox" name="categoryIds" value="${esc(key)}" ${selected?'checked':''} ${!c.runnable&&!selected?'disabled':''} aria-label="${attackPathName(vector)} · ${esc(c.name)}"><span class="category-card-top"><span class="category-glyph">${icon(c.id==='system-prompt-leak'?'lock':c.id==='special-token'?'code':c.id==='hidden-text'?'search':c.id==='attachment-injection'?'file':'layers')}</span><span class="category-check">${icon('check')}</span></span><strong>${esc(c.name)}</strong><span class="category-scope-label">${esc(categoryScopeName(categoryScope(c)))}</span><span class="category-count"><b>${c.runnable}</b> 실행 가능 <span>전체 ${c.total}건</span></span></label>
     <div class="category-amount"><label for="count-${esc(key)}">선택할 시나리오 수</label><div><input id="count-${esc(key)}" name="category-count" data-category="${esc(key)}" type="number" inputmode="numeric" min="1" max="${Math.max(1,c.runnable)}" step="1" value="${esc(count)}" ${selected?'required':'disabled'} aria-label="${attackPathName(vector)} · ${esc(c.name)} 선택 개수" aria-describedby="count-note-${esc(key)} count-error-${esc(key)}"><span>/ ${c.runnable}건</span></div></div>
     <span class="category-foot" id="count-note-${esc(key)}">${c.total===0?'이 경로의 시나리오 등록 예정':c.unsupported?`첨부 경로 ${c.unsupported}건 준비 중`:c.disabled?`비활성 ${c.disabled}건 제외`:'먼저 등록된 순서 · 시나리오당 1회'}</span><p class="category-count-error" id="count-error-${esc(key)}" role="status">${esc(issue||'')}</p></div>`;
     };
     const active=groups.filter(c=>c.runnable||state.categoryIds.includes(vectorCategoryKey(vector,c.id))),empty=groups.filter(c=>!active.includes(c));
     return header+(active.map(renderCard).join('')||'<div class="category-empty">실행 가능한 카테고리가 없어요.</div>')+'</div>'+ (empty.length?`<details class="vector-empty-categories"><summary>준비 중인 카테고리 ${empty.length}개 보기 · 미등록·비활성·첨부 경로</summary><div class="category-grid">${empty.map(renderCard).join('')}</div></details>`:'')+'</section>';
-  }).join('')||'<div class="category-empty">위에서 실험할 공격 경로를 선택해 주세요.</div>';
+  }).join('');
+  const common=layout.common.filter(matches);
+  return paths+(common.length?`<section class="common-pending-categories" aria-label="공통 준비 중 카테고리"><div class="vector-group-heading"><div><h3>공통 준비 중 카테고리</h3><span>직접·간접 모두에 적용</span></div>${tag(common.length+'개','blue')}</div><p>아직 시나리오가 없는 공통 분류예요. 시나리오를 등록하면 해당 공격 경로에서 선택할 수 있어요.</p><div class="common-category-list">${common.map(c=>`<div class="common-category-card" data-empty-category-id="${esc(c.id)}">${icon('layers')}<div><strong>${esc(c.name)}</strong><span>직접·간접 공통 · 시나리오 등록 예정</span></div></div>`).join('')}</div></section>`:'');
 }
 function normalRepeatSelection(raw=state.dbNormalRepeat){
   const repeat=typeof raw==='number'||typeof raw==='string'&&raw.trim()!==''?Number(raw):NaN;
@@ -169,11 +180,11 @@ function experimentsPage(){if(state.dbConfigured)return databaseExperimentsPage(
  <section class="panel selection-panel"><div class="panel-head"><div><span class="section-kicker">03 / REVIEW</span><h2>선택한 실험 구성</h2></div>${tag('미실행','amber')}</div><div class="body-pad" style="padding-top:5px"><div id="plan-summary">${planSummary()}</div><div id="preview-plan-actions" class="${previewMode&&state.dbKind==='normal'?'hidden':''}"><div class="field"><label for="plan-title">실험 이름</label><input id="plan-title" maxlength="100" placeholder="예: 카테고리별 기준 실험"></div><button class="btn primary full-width" data-action="save-plan">${icon('plus')}실험 계획 저장</button><p class="local-note">선택 시점의 시나리오 목록을 계획에 보관해요. 모델 사용량은 발생하지 않아요.</p></div>${previewMode?`<div id="preview-normal-actions" class="${state.dbKind==='normal'?'':'hidden'}"><button class="btn primary full-width" type="button" disabled>실제 실행은 API·DB 연결 후 지원</button><p class="local-note">정상 반복 설정을 확인하는 화면이에요. 실행 결과를 생성하거나 저장하지 않아요.</p></div>`:''}</div></section></div>
  <section class="panel" style="margin-top:22px"><div class="panel-head"><h2>저장된 실험 계획</h2><span class="muted small">${state.plans.length}건</span></div><div class="panel-body">${state.plans.length?state.plans.slice().reverse().map(p=>`<div class="plan-card"><div class="wide-label"><strong>${esc(p.title)}</strong><button class="btn text" data-action="plan-detail" data-id="${esc(p.id)}">계획 보기</button></div><p>${esc(p.model)} · ${p.selectionOrder?`서로 다른 공격 ${p.scenarios.length}개 · 각 1회`:`공격 ${p.scenarios.length}개 × ${p.repeat}회`} · ${esc(defenseName(p.defense))}</p></div>`).join(''):'<div class="empty-table">카테고리를 선택해 첫 실험 계획을 만들어 보세요.</div>'}</div></section>`;}
 function planSummary(){if(previewMode&&state.dbKind==='normal')return categorySelectionSummary(true);return categorySelectionSummary()+`<div class="config-row"><span>방어 설정</span><strong>${esc(defenseName(state.defense))}</strong></div>`;}
-function categorySidebar(){return `<aside class="panel category-sidebar" aria-label="공격 카테고리 필터"><div class="category-sidebar-head"><h2>카테고리</h2><button class="icon-button" data-action="add-category" aria-label="카테고리 추가" ${state.dbConfigured&&!state.dbCategorySupport?'disabled':''}>${icon('plus')}</button></div><div class="category-filter-list"><button class="category-filter ${state.categoryFilter==='all'?'active':''}" data-action="filter-category" data-id="all" aria-pressed="${state.categoryFilter==='all'}"><span>${icon('grid')}전체 공격</span><b>${state.attacks.length}</b></button>${categoryGroups(state.categories,state.attacks).map(c=>`<button class="category-filter ${state.categoryFilter===c.id?'active':''}" data-action="filter-category" data-id="${esc(c.id)}" aria-pressed="${state.categoryFilter===c.id}"><span>${icon('layers')}${esc(c.name)}</span><b>${c.total}</b></button>`).join('')}</div><div class="category-sidebar-note">시나리오가 없어도 카테고리를 먼저 만들 수 있어요.</div></aside>`;}
-function dataPage(){const attacks=state.tab==='attacks';return head('DATA WORKSPACE','데이터 관리','정상 이메일과 공격 시나리오를 모으고, 카테고리별로 실험 데이터를 관리하세요.',`<button class="btn" data-action="export-data">${icon('download')}내보내기</button>${attacks?`<button class="btn" data-action="add-category" ${state.dbConfigured&&!state.dbCategorySupport?'disabled':''}>${icon('layers')}카테고리 추가</button>`:''}<button class="btn primary" data-action="add-record">${icon('plus')}${attacks?'공격 추가':'데이터 추가'}</button>`)+
+function categorySidebar(){return `<aside class="panel category-sidebar" aria-label="공격 카테고리 필터"><div class="category-sidebar-head"><h2>카테고리</h2><button class="icon-button" data-action="add-category" aria-label="카테고리 추가" ${state.dbConfigured&&!state.dbCategoryScopeSupport?'disabled':''}>${icon('plus')}</button></div><div class="category-filter-list"><button class="category-filter ${state.categoryFilter==='all'?'active':''}" data-action="filter-category" data-id="all" aria-pressed="${state.categoryFilter==='all'}"><span>${icon('grid')}전체 공격</span><b>${state.attacks.length}</b></button>${categoryGroups(state.categories,state.attacks).map(c=>`<button class="category-filter ${state.categoryFilter===c.id?'active':''}" data-action="filter-category" data-id="${esc(c.id)}" aria-pressed="${state.categoryFilter===c.id}"><span>${icon('layers')}<span>${esc(c.name)}<small>${esc(categoryScopeName(categoryScope(c)))}</small></span></span><b>${c.total}</b></button>`).join('')}</div><div class="category-sidebar-note">시나리오가 없어도 카테고리를 먼저 만들 수 있어요.</div></aside>`;}
+function dataPage(){const attacks=state.tab==='attacks';return head('DATA WORKSPACE','데이터 관리','정상 이메일과 공격 시나리오를 모으고, 카테고리별로 실험 데이터를 관리하세요.',`<button class="btn" data-action="export-data">${icon('download')}내보내기</button>${attacks?`<button class="btn" data-action="add-category" ${state.dbConfigured&&!state.dbCategoryScopeSupport?'disabled':''}>${icon('layers')}카테고리 추가</button><button class="btn" data-action="category-scope" ${state.dbConfigured&&!state.dbCategoryScopeSupport?'disabled':''}>적용 경로 관리</button>`:''}<button class="btn primary" data-action="add-record">${icon('plus')}${attacks?'공격 추가':'데이터 추가'}</button>`)+
  databaseNotice()+
  `<div class="tabs" role="tablist" aria-label="데이터 유형"><button role="tab" aria-selected="${!attacks}" class="${!attacks?'active':''}" data-action="data-tab" data-tab="normal">정상 데이터 <span class="counter">${state.normal.length}</span></button><button role="tab" aria-selected="${attacks}" class="${attacks?'active':''}" data-action="data-tab" data-tab="attacks">공격 시나리오 <span class="counter">${state.attacks.length}</span></button></div>
- ${attacks&&state.dbConfigured&&!state.dbCategorySupport?notice('현재 연결된 백엔드에는 카테고리 저장 기능이 아직 적용되지 않았어요. 카테고리 추가·공격 수정은 백엔드 업데이트 후 사용할 수 있어요.','amber'):''}
+ ${attacks&&state.dbConfigured&&!state.dbCategorySupport?notice('현재 연결된 백엔드에는 카테고리 저장 기능이 아직 적용되지 않았어요. 카테고리 추가·공격 수정은 백엔드 업데이트 후 사용할 수 있어요.','amber'):attacks&&state.dbConfigured&&!state.dbCategoryScopeSupport?notice('카테고리 적용 경로 저장은 백엔드 업데이트 후 사용할 수 있어요. 기존 공격 경로는 유지돼요.','amber'):''}
  <div class="${attacks?'category-workspace':''}">${attacks?categorySidebar():''}<div class="dataset-main"><div class="dataset-heading"><div><span class="section-kicker">${attacks?'ATTACK LIBRARY':'NORMAL EMAILS'}</span><h2>${attacks?(state.categoryFilter==='all'?'전체 공격 시나리오':esc(categoryName(state.categoryFilter))):'정상 이메일'}</h2><p>${attacks?'카테고리를 선택해 필요한 공격만 살펴보세요.':`검토 완료 ${gtCount()} / 목표 100건 · 기준 요약은 선택 항목`}</p></div>${attacks?tag(state.categories.length+'개 카테고리','blue'):''}</div>
  <div class="toolbar"><div class="search">${icon('search')}<label class="screen-reader" for="data-query">데이터 검색</label><input id="data-query" type="search" placeholder="${attacks?'이름, 공격문, 카테고리 검색':'제목, 원문 검색'}" value="${esc(state.query)}"></div><div class="actions"><label class="screen-reader" for="data-filter">상태 필터</label><select id="data-filter">${(!attacks?[['all','모든 데이터'],['sample','UI 예시'],['pending','검토 대기'],['reviewed','검토 완료']]:[['all','모든 공격 경로'],['direct','직접 인젝션'],['indirect','간접 인젝션']]).map(([v,t])=>`<option value="${v}" ${state.filter===v?'selected':''}>${t}</option>`).join('')}</select><label class="screen-reader" for="data-sort">정렬 순서</label><select id="data-sort">${[['default','등록 순'],['name','이름 순'],...(attacks?[['category','카테고리 순']]:[])].map(([v,t])=>`<option value="${v}" ${state.dataSort===v?'selected':''}>${t}</option>`).join('')}</select></div></div><section class="panel" id="data-table">${dataTable()}</section><div class="data-secondary-actions"><button class="btn text" data-action="import-data">${icon('upload')}JSON 가져오기</button><span>기존 자료와 수정 이력은 그대로 보관해요.</span></div></div></div><input id="import-file" type="file" accept=".json,application/json" hidden>`;}
 function filteredData(){const normal=state.tab==='normal';const list=normal?state.normal:state.attacks;const q=state.query.trim().toLowerCase();const rows=list.filter(x=>(state.filter==='all'||(normal?x.reviewStatus===state.filter:x.vector===state.filter))&&(normal||state.categoryFilter==='all'||categoryFor(x)===state.categoryFilter)&&[x.id,x.title,x.name,x.body,x.payload,x.technique,normal?'':categoryName(categoryFor(x))].filter(Boolean).join(' ').toLowerCase().includes(q));if(state.dataSort==='name')rows.sort((a,b)=>(a.title||a.name).localeCompare(b.title||b.name,'ko'));if(!normal&&state.dataSort==='category')rows.sort((a,b)=>categoryName(categoryFor(a)).localeCompare(categoryName(categoryFor(b)),'ko')||a.name.localeCompare(b.name,'ko'));return rows;}
@@ -196,8 +207,9 @@ async function dbApi(path,method='GET',data){return readApiResponse(await fetch(
 function adoptDatabase(data){
   if(!Array.isArray(data.normal)||!Array.isArray(data.attacks))throw Error('DB 데이터 형식을 확인해 주세요.');
   const categoryData=normalizeCategoryData(data.categories,data.attacks);
+  state.dbCategoryScopeSupport=Array.isArray(data.categories)&&data.categories.every(c=>categoryScopes.includes(c.scope));
   state.dbCategorySupport=Array.isArray(data.categories);state.normal=data.normal;state.attacks=categoryData.attacks;state.categories=categoryData.categories;
-  state.categoryIds=state.categoryIds.filter(id=>state.categories.some(c=>attackVectors.some(v=>vectorCategoryKey(v,c.id)===id)));
+  reconcileCategorySelection();
   if(!state.normal.some(x=>x.id===state.selectedSample))state.selectedSample=state.normal[0]?.id||'';
   state.attackIds=state.attackIds.filter(id=>state.attacks.some(x=>x.id===id));
 }
@@ -404,19 +416,54 @@ function recordForm(id){if(state.tab==='attacks'&&state.dbConfigured&&!state.dbC
 function categoryForm(){
   if(!datasetWritable())return;
   if(state.categories.length>=1000)return toast('카테고리는 최대 1,000개까지 지원해요.');
-  if(state.dbConfigured&&!state.dbCategorySupport)return toast('현재 백엔드는 카테고리 저장을 지원하지 않아요.');
+  if(state.dbConfigured&&!state.dbCategoryScopeSupport)return toast('카테고리 적용 경로를 지원하는 백엔드로 업데이트해 주세요.');
   if($('#modal').open)$('#modal').close();
-  modal('새 공격 카테고리',`<p class="category-modal-intro">팀의 공격 분류에 맞게 이름을 정하세요. 빈 카테고리를 먼저 만들고, 나중에 시나리오를 추가할 수 있어요.</p><form id="category-form"><div class="field"><label for="category-name">카테고리 이름</label><input id="category-name" name="name" required maxlength="60" placeholder="예: 다국어 우회"><span class="hint">최대 60자 · 같은 이름은 중복 등록할 수 없어요.</span></div><p class="error" id="category-error" role="alert"></p></form>`,`<button class="btn" data-action="close-modal">취소</button><button class="btn primary" id="category-submit" type="submit" form="category-form">카테고리 만들기</button>`);
+  modal('새 공격 카테고리',`<p class="category-modal-intro">빈 카테고리의 이름과 적용 경로를 먼저 정하고, 나중에 시나리오를 추가할 수 있어요.</p><form id="category-form"><div class="field"><label for="category-name">카테고리 이름</label><input id="category-name" name="name" required maxlength="60" placeholder="예: 다국어 우회"><span class="hint">최대 60자 · 같은 이름은 중복 등록할 수 없어요.</span></div><div class="field"><label for="category-scope">적용 경로</label><select id="category-scope" name="scope">${categoryScopeOptions('both')}</select><span class="hint">두 경로에서 사용할 수 있는 기법은 공통으로 지정해 주세요.</span></div><p class="error" id="category-error" role="alert"></p></form>`,`<button class="btn" data-action="close-modal">취소</button><button class="btn primary" id="category-submit" type="submit" form="category-form">카테고리 만들기</button>`);
   $('#category-form').addEventListener('submit',async event=>{
-    event.preventDefault();const name=$('#category-name').value.normalize('NFKC').trim().replace(/\s+/gu,' ');const error=$('#category-error');
+    event.preventDefault();if(!datasetWritable())return;
+    const name=$('#category-name').value.normalize('NFKC').trim().replace(/\s+/gu,' '),scope=$('#category-scope').value,error=$('#category-error');
     if(!name||name.length>60||/\p{C}/u.test(name)){error.textContent='이름은 표시 가능한 1~60자로 입력해 주세요.';return;}
+    if(!categoryScopes.includes(scope)){error.textContent='적용 경로를 선택해 주세요.';return;}
     if(state.categories.some(c=>categoryNameKey(c.name)===categoryNameKey(name))){error.textContent='같은 이름의 카테고리가 이미 있어요.';return;}
     const submit=$('#category-submit');submit.disabled=true;
     try{let created;
-      if(state.dbReady){const data=await dbApi('/api/categories','POST',{name});if(!Array.isArray(data.categories))throw Error('서버에서 카테고리 저장을 확인하지 못했어요.');adoptDatabase(data);created=state.categories.find(c=>categoryNameKey(c.name)===categoryNameKey(name));}
-      else{created={id:'CAT-'+createId(),name};state.categories.push(created);if(!persist()){state.categories.pop();throw Error('카테고리를 저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.');}}
-      state.tab='attacks';state.categoryFilter=created?.id||'all';$('#modal').close();shell();toast('카테고리를 추가했어요. 이제 공격 시나리오를 등록해 보세요.');
+      if(state.dbReady){const data=await dbApi('/api/categories','POST',{name,scope});created=data.categories?.find(c=>categoryNameKey(c.name)===categoryNameKey(name));if(created?.scope!==scope)throw Error('서버에서 카테고리 적용 경로 저장을 확인하지 못했어요.');adoptDatabase(data);}
+      else{created={id:'CAT-'+createId(),name,scope};state.categories.push(created);if(!persist()){state.categories.pop();throw Error('카테고리를 저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.');}}
+      state.tab='attacks';state.categoryFilter=created.id;$('#modal').close();shell();toast('카테고리와 적용 경로를 저장했어요. 이제 공격 시나리오를 등록해 보세요.');
     }catch(e){error.textContent=e.message;submit.disabled=false;}
+  });
+}
+function categoryScopeForm(){
+  if(!datasetWritable())return;
+  if(state.dbConfigured&&!state.dbCategoryScopeSupport)return toast('카테고리 적용 경로를 지원하는 백엔드로 업데이트해 주세요.');
+  if($('#modal').open)$('#modal').close();
+  const first=state.categories.find(c=>c.id===state.categoryFilter)||state.categories.find(c=>c.id!=='uncategorized')||state.categories[0];
+  if(!first)return;
+  modal('카테고리 적용 경로 관리',`<p class="category-modal-intro">빈 카테고리를 어느 공격 경로에 표시할지 정하세요. 기존 시나리오는 등록된 직접·간접 경로와 실험 기록을 유지해요.</p><form id="category-scope-form"><div class="field"><label for="scope-category">카테고리</label><select id="scope-category">${state.categories.map(c=>`<option value="${esc(c.id)}" ${c.id===first.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div class="field"><label for="category-scope">적용 경로</label><select id="category-scope">${categoryScopeOptions(categoryScope(first))}</select><span class="hint" id="category-scope-hint"></span></div><p class="error" id="category-error" role="alert"></p></form>`,`<button class="btn" data-action="close-modal">취소</button><button class="btn primary" id="category-submit" type="submit" form="category-scope-form">적용 경로 저장</button>`);
+  let expectedScope=categoryScope(first);
+  const loadCategory=()=>{
+    const selected=state.categories.find(c=>c.id===$('#scope-category').value);
+    if(!selected)return;
+    expectedScope=categoryScope(selected);$('#category-scope').value=expectedScope;
+    const locked=selected.id==='uncategorized';$('#category-scope').disabled=locked;$('#category-submit').disabled=locked;
+    $('#category-scope-hint').textContent=locked?'미분류는 분류 전 데이터를 모으므로 공통으로 유지해요.':'공통인 빈 카테고리는 공통 준비 중 영역에 한 번만 표시돼요.';
+    $('#category-error').textContent='';
+  };
+  $('#scope-category').addEventListener('change',loadCategory);loadCategory();
+  $('#category-scope-form').addEventListener('submit',async event=>{
+    event.preventDefault();if(!datasetWritable())return;
+    const id=$('#scope-category').value,scope=$('#category-scope').value,error=$('#category-error'),submit=$('#category-submit');
+    if(id==='uncategorized'||!categoryScopes.includes(scope)){error.textContent='미분류는 공통으로 유지하고, 다른 카테고리의 적용 경로를 선택해 주세요.';return;}
+    const category=state.categories.find(c=>c.id===id);if(!category)return;
+    submit.disabled=true;$('#scope-category').disabled=true;
+    try{
+      if(state.dbReady){const data=await dbApi('/api/categories/'+encodeURIComponent(id),'PUT',{scope,expectedScope});if(data.categories?.find(c=>c.id===id)?.scope!==scope)throw Error('서버에서 적용 경로 저장을 확인하지 못했어요.');adoptDatabase(data);}
+      else{if(categoryScope(category)!==expectedScope)throw Error('카테고리가 변경됐어요. 창을 다시 열어 확인해 주세요.');const before=category.scope;category.scope=scope;if(!persist()){category.scope=before;throw Error('적용 경로를 저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.');}}
+      $('#modal').close();shell();toast('적용 경로를 저장했어요. 기존 시나리오와 실험 기록은 유지돼요.');
+    }catch(e){
+      if(e.status===409&&state.dbReady){try{adoptDatabase(await dbApi('/api/data'));loadCategory();}catch{}}
+      error.textContent=e.message;submit.disabled=false;$('#scope-category').disabled=false;
+    }
   });
 }
 function addNote(){modal('의사결정 기록 추가',`<form id="note-form"><div class="field"><label for="note-title">결정 또는 시도</label><input id="note-title" name="title" maxlength="150" required placeholder="예: 입력 탐지 기법 선정"></div><div class="field"><label for="note-body">선택 이유 · 대안 · 결과</label><textarea id="note-body" name="body" maxlength="6000" required placeholder="선택한 이유와 고려한 대안, 실패했다면 배운 점을 기록하세요."></textarea></div></form>`,`<button class="btn" data-action="close-modal">취소</button><button class="btn primary" type="submit" form="note-form">기록 저장</button>`);$('#note-form').addEventListener('submit',e=>{e.preventDefault();const d=new FormData(e.target);const title=d.get('title').trim(),body=d.get('body').trim();if(!title||!body)return;state.notes.push({id:createId(),title,body,date:new Date().toISOString()});const ok=persist();$('#modal').close();shell();if(ok)toast('의사결정 기록을 저장했어요.');});}
@@ -467,6 +514,7 @@ const actions={
  'select-all-categories':el=>{const vector=el.dataset.vector;if(!attackVectors.includes(vector)||!state.vectorIds.includes(vector))return;const available=categoryGroups(state.categories,state.attacks.filter(a=>a.vector===vector)).filter(c=>c.runnable).map(c=>vectorCategoryKey(vector,c.id));const other=state.categoryIds.filter(key=>!key.startsWith(vector+':'));state.categoryIds=available.every(id=>state.categoryIds.includes(id))?other:[...other,...available];$('#category-grid').innerHTML=categoryCards();bindCategoryPicker();updatePlan();},
  'filter-category':el=>{state.categoryFilter=el.dataset.id;shell();},
  'add-category':()=>categoryForm(),
+ 'category-scope':()=>categoryScopeForm(),
  'manage-attacks':()=>{state.tab='attacks';state.categoryFilter='all';},
  'save-plan':savePlan,
  'plan-detail':el=>{const p=state.plans.find(x=>x.id===el.dataset.id);if(p)modal(p.title,`${tag('미실행 계획','amber')}<div class="detail-block"><h3>설정</h3><p>${esc(p.model)} · ${esc(defenseName(p.defense))}\n시나리오 ${p.scenarios.length}개 × ${p.repeat}회 = ${p.scenarios.length*p.repeat}회 예정</p></div>${['registered-first-v1','vector-registered-first-v1'].includes(p.selectionOrder)&&Array.isArray(p.categorySelections)?`<div class="detail-block"><h3>카테고리별 선택 수 · 먼저 등록된 순서</h3><p>${p.categorySelections.map(c=>(c.vector?esc(vectorName(c.vector))+' 공격 / ':'')+esc(c.name)+' · '+esc(c.count)+'건').join('\n')}</p></div>`:''}<div class="detail-block"><h3>저장 당시 시나리오</h3><p>${p.scenarios.map(s=>esc(s.name)+' · '+vectorName(s.vector)).join('\n')}</p></div><div class="detail-block"><h3>기록 시각</h3><p>${esc(p.createdAt)}</p></div>`,`<button class="btn" data-action="close-modal">닫기</button><button class="btn primary" id="download-plan">JSON 내보내기</button>`);$('#download-plan')?.addEventListener('click',()=>download('fincode-experiment-plan.json',JSON.stringify(p,null,2)));},

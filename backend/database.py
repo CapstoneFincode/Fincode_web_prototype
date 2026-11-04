@@ -41,6 +41,12 @@ def category_name(value):
     return name, name.casefold()
 
 
+def category_scope(value):
+    if not isinstance(value, str) or value not in ('direct', 'indirect', 'both'):
+        raise DataError('카테고리 적용 경로는 직접, 간접 또는 공통으로 선택해 주세요.',400,'INVALID_CATEGORY_SCOPE')
+    return value
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -66,6 +72,7 @@ class Database:
         with self.connect() as conn:
             conn.execute('SELECT response_payload,lease_expires_at FROM runs LIMIT 0')
             conn.execute('SELECT category_id FROM attack_scenarios LIMIT 0')
+            conn.execute('SELECT scope FROM attack_categories LIMIT 0')
         return {'configured': True, 'ready': True, 'engine': 'postgresql'}
 
     def seed(self):
@@ -89,8 +96,8 @@ class Database:
                 min(created_at) OVER (PARTITION BY scenario_key) AS registered_at
                 FROM attack_scenarios a ORDER BY scenario_key,revision DESC) a
                 WHERE archived_at IS NULL ORDER BY registered_at,scenario_key''').fetchall()
-            categories = conn.execute('SELECT id,name FROM attack_categories ORDER BY sort_order,name,id').fetchall()
-        return {'categories': [dict(id=r['id'], name=r['name']) for r in categories],
+            categories = conn.execute('SELECT id,name,scope FROM attack_categories ORDER BY sort_order,name,id').fetchall()
+        return {'categories': [dict(id=r['id'], name=r['name'], scope=r['scope']) for r in categories],
                 'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
                     reference=r['reference_summary'] or '', requiredFacts=r['quality_facts'] or [], reviewStatus=r['label_review_status'],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in normal],
@@ -105,12 +112,30 @@ class Database:
         if not isinstance(data, dict):
             raise DataError('JSON 객체를 보내 주세요.')
         name, normalized = category_name(data.get('name'))
+        scope = category_scope(data.get('scope', 'both'))
         with self.connect() as conn:
-            created = conn.execute('''INSERT INTO attack_categories (id,name,normalized_name,created_by)
-                VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id''',
-                ('CAT-' + str(uuid4()), name, normalized, self.actor)).fetchone()
+            created = conn.execute('''INSERT INTO attack_categories (id,name,normalized_name,created_by,scope)
+                VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id''',
+                ('CAT-' + str(uuid4()), name, normalized, self.actor, scope)).fetchone()
         if not created:
             raise DataError('같은 이름의 카테고리가 이미 있습니다.',409,'CATEGORY_EXISTS') from None
+        return self.datasets()
+
+    def update_category_scope(self, identifier, data):
+        if not isinstance(data, dict) or set(data) - {'scope', 'expectedScope'}:
+            raise DataError('카테고리 적용 경로와 이전 경로만 보내 주세요.')
+        identifier = text(identifier, '카테고리 ID', 80)
+        scope = category_scope(data.get('scope'))
+        expected = category_scope(data.get('expectedScope'))
+        with self.connect() as conn:
+            current = conn.execute('SELECT scope FROM attack_categories WHERE id=%s FOR UPDATE', (identifier,)).fetchone()
+            if not current:
+                raise DataError('카테고리를 찾을 수 없습니다.',404,'CATEGORY_NOT_FOUND')
+            if current['scope'] != expected:
+                raise DataError('다른 사용자가 카테고리 경로를 수정했습니다. 새로고침한 뒤 다시 시도해 주세요.',409,'CATEGORY_SCOPE_CONFLICT')
+            if identifier == 'uncategorized' and scope != 'both':
+                raise DataError('미분류는 직접·간접 공통으로 유지됩니다.',400,'CATEGORY_SCOPE_FIXED')
+            conn.execute('UPDATE attack_categories SET scope=%s WHERE id=%s', (scope,identifier))
         return self.datasets()
 
     def _save(self, conn, kind, data, key, revision=1, sample=False):
