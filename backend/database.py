@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
+import unicodedata
 from pathlib import Path
 from uuid import UUID, uuid4
 import psycopg
@@ -30,6 +31,22 @@ def uuid(value):
         raise DataError('데이터 ID 형식을 확인해 주세요.') from None
 
 
+def category_name(value):
+    """Canonical display/key pair; Unicode and spacing variants are duplicates."""
+    if not isinstance(value, str):
+        raise DataError('카테고리 이름은 1~60자로 입력해 주세요.')
+    name = ' '.join(unicodedata.normalize('NFKC', value).split())
+    if not name or len(name) > 60 or any(unicodedata.category(c).startswith('C') for c in name):
+        raise DataError('카테고리 이름은 1~60자로 입력해 주세요.')
+    return name, name.casefold()
+
+
+def category_scope(value):
+    if not isinstance(value, str) or value not in ('direct', 'indirect', 'both'):
+        raise DataError('카테고리 적용 경로는 직접, 간접 또는 공통으로 선택해 주세요.',400,'INVALID_CATEGORY_SCOPE')
+    return value
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -54,6 +71,8 @@ class Database:
     def health(self):
         with self.connect() as conn:
             conn.execute('SELECT response_payload,lease_expires_at FROM runs LIMIT 0')
+            conn.execute('SELECT category_id FROM attack_scenarios LIMIT 0')
+            conn.execute('SELECT scope FROM attack_categories LIMIT 0')
         return {'configured': True, 'ready': True, 'engine': 'postgresql'}
 
     def seed(self):
@@ -73,16 +92,51 @@ class Database:
                 (SELECT DISTINCT ON (case_key) * FROM email_cases ORDER BY case_key,revision DESC) e
                 LEFT JOIN LATERAL (SELECT * FROM ground_truths WHERE email_case_id=e.id ORDER BY revision DESC LIMIT 1) g ON true
                 WHERE e.archived_at IS NULL ORDER BY e.created_at, e.case_key''').fetchall()
-            attacks = conn.execute('''SELECT * FROM (SELECT DISTINCT ON (scenario_key) * FROM attack_scenarios
-                ORDER BY scenario_key,revision DESC) a WHERE archived_at IS NULL ORDER BY created_at,scenario_key''').fetchall()
-        return {'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
+            attacks = conn.execute('''SELECT * FROM (SELECT DISTINCT ON (scenario_key) a.*,
+                min(created_at) OVER (PARTITION BY scenario_key) AS registered_at
+                FROM attack_scenarios a ORDER BY scenario_key,revision DESC) a
+                WHERE archived_at IS NULL ORDER BY registered_at,scenario_key''').fetchall()
+            categories = conn.execute('SELECT id,name,scope FROM attack_categories ORDER BY sort_order,name,id').fetchall()
+        return {'categories': [dict(id=r['id'], name=r['name'], scope=r['scope']) for r in categories],
+                'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
                     reference=r['reference_summary'] or '', requiredFacts=r['quality_facts'] or [], reviewStatus=r['label_review_status'],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in normal],
                 'attacks': [dict(id=r['scenario_key'], dbId=str(r['id']), dbVersion=r['revision'], name=r['name'], vector=r['vector'],
+                    categoryId=r['category_id'], registeredAt=r['registered_at'].astimezone(timezone.utc).isoformat().replace('+00:00','Z'),
                     channel={'user_instruction':'input','email_body':'email','attachment_text':'attachment','image_ocr':'attachment'}[r['channel']],
                     technique=r['technique'], goal=r['goal'], payload=r['payload'], criterion=r['success_criterion']['description'],
                     expectedOutput=r['success_criterion'].get('expectedOutput',''), enabled=r['enabled'],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in attacks]}
+
+    def create_category(self, data):
+        if not isinstance(data, dict):
+            raise DataError('JSON 객체를 보내 주세요.')
+        name, normalized = category_name(data.get('name'))
+        scope = category_scope(data.get('scope', 'both'))
+        with self.connect() as conn:
+            created = conn.execute('''INSERT INTO attack_categories (id,name,normalized_name,created_by,scope)
+                VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id''',
+                ('CAT-' + str(uuid4()), name, normalized, self.actor, scope)).fetchone()
+        if not created:
+            raise DataError('같은 이름의 카테고리가 이미 있습니다.',409,'CATEGORY_EXISTS') from None
+        return self.datasets()
+
+    def update_category_scope(self, identifier, data):
+        if not isinstance(data, dict) or set(data) - {'scope', 'expectedScope'}:
+            raise DataError('카테고리 적용 경로와 이전 경로만 보내 주세요.')
+        identifier = text(identifier, '카테고리 ID', 80)
+        scope = category_scope(data.get('scope'))
+        expected = category_scope(data.get('expectedScope'))
+        with self.connect() as conn:
+            current = conn.execute('SELECT scope FROM attack_categories WHERE id=%s FOR UPDATE', (identifier,)).fetchone()
+            if not current:
+                raise DataError('카테고리를 찾을 수 없습니다.',404,'CATEGORY_NOT_FOUND')
+            if current['scope'] != expected:
+                raise DataError('다른 사용자가 카테고리 경로를 수정했습니다. 새로고침한 뒤 다시 시도해 주세요.',409,'CATEGORY_SCOPE_CONFLICT')
+            if identifier == 'uncategorized' and scope != 'both':
+                raise DataError('미분류는 직접·간접 공통으로 유지됩니다.',400,'CATEGORY_SCOPE_FIXED')
+            conn.execute('UPDATE attack_categories SET scope=%s WHERE id=%s', (scope,identifier))
+        return self.datasets()
 
     def _save(self, conn, kind, data, key, revision=1, sample=False):
         identifier = str(uuid4())
@@ -106,6 +160,9 @@ class Database:
                 insert(conn,'ground_truths',dict(id=str(uuid4()), email_case_id=identifier, revision=1, reference_summary=ref,
                     required_facts=facts, review_status='sample' if sample else 'draft', created_by=self.actor))
         elif kind == 'attacks':
+            category_id = text(data.get('categoryId', 'uncategorized'), '카테고리', 80)
+            if not conn.execute('SELECT id FROM attack_categories WHERE id=%s', (category_id,)).fetchone():
+                raise DataError('등록된 카테고리를 선택해 주세요.',400,'UNKNOWN_CATEGORY')
             vector, channel = data.get('vector'), data.get('channel')
             if vector not in ('direct','indirect') or channel not in ('input','email','attachment') or (vector=='direct') != (channel=='input'):
                 raise DataError('직접 공격은 사용자 입력, 간접 공격은 이메일 또는 첨부파일 경로를 선택해 주세요.')
@@ -113,7 +170,7 @@ class Database:
             if type(enabled) is not bool:
                 raise DataError('활성화 여부를 확인해 주세요.')
             expected = text(data.get('expectedOutput',''),'정확히 일치할 응답',2000,False)
-            insert(conn,'attack_scenarios',dict(**common, scenario_key=key, name=text(data.get('name'),'이름',200), vector=vector,
+            insert(conn,'attack_scenarios',dict(**common, scenario_key=key, category_id=category_id, name=text(data.get('name'),'이름',200), vector=vector,
                 channel={'input':'user_instruction','email':'email_body','attachment':'attachment_text'}[channel],
                 technique=text(data.get('technique'),'기법',200), goal=text(data.get('goal'),'목표',200), payload=text(data.get('payload'),'공격문'),
                 success_criterion={'description':text(data.get('criterion'),'판정 기준'), 'expectedOutput':expected,
@@ -140,6 +197,8 @@ class Database:
                     raise DataError('예시는 복사해서 수정하고, 보관된 자료는 새로 등록해 주세요.',409,'VERSION_CONFLICT')
                 if type(data.get('dbVersion')) is not int or data['dbVersion'] != current['revision']:
                     raise DataError('다른 사용자가 수정했습니다. DB를 새로고침해 주세요.',409,'VERSION_CONFLICT')
+                if kind == 'attacks' and 'categoryId' not in data:
+                    data = {**data, 'categoryId': current['category_id']}
             self._save(conn,kind,data,key,1 if not current else current['revision']+1)
         return self.datasets()
 
@@ -163,7 +222,7 @@ class Database:
         if prior:
             if prior['submission_sha256'] != fingerprint:
                 raise DataError('같은 요청 키에 다른 입력이 사용되었습니다.',409,'IDEMPOTENCY_CONFLICT')
-            r=conn.execute('SELECT r.id,r.status,r.response_payload FROM runs r JOIN experiment_cases c ON c.id=r.experiment_case_id WHERE c.experiment_id=%s ORDER BY r.created_at LIMIT 1',(prior['id'],)).fetchone()
+            r=conn.execute('SELECT r.id,r.status,r.response_payload FROM runs r JOIN experiment_cases c ON c.id=r.experiment_case_id WHERE c.experiment_id=%s ORDER BY c.case_number,c.repeat_index,r.id LIMIT 1',(prior['id'],)).fetchone()
             return {'id':str(prior['id']), 'runId':str(r['id']), 'existing':True, 'status':r['status'], 'response':r['response_payload']}
         eid=str(uuid4())
         now=datetime.now(timezone.utc)
@@ -183,7 +242,8 @@ class Database:
                     else:
                         messages[1]['content']+='\n\n'+scenario['payload']
                 snapshot={'email':{'subject':subject,'body':body},'messages':messages,'injectionStrategy':'separate-user-message' if scenario and scenario['vector']=='direct' else 'append-email-body' if scenario else 'none',
-                    'successCriterion':scenario['success_criterion'] if scenario else None}
+                    'successCriterion':scenario['success_criterion'] if scenario else None,
+                    'attackCategoryId':scenario['category_id'] if scenario else None}
                 cid,rid=str(uuid4()),str(uuid4())
                 first_run=first_run or rid
                 insert(conn,'experiment_cases',dict(id=cid,experiment_id=eid,case_number=number,repeat_index=repeat,expected_label=label,
@@ -223,8 +283,10 @@ class Database:
                 inputs=[(email,None,'normal')]
             elif kind=='attack':
                 ids=data.get('scenarioIds')
-                if not isinstance(ids,list) or not 1<=len(ids)<=10 or any(not isinstance(i,str) for i in ids) or len(set(ids))!=len(ids):
-                    raise DataError('서로 다른 공격 시나리오를 1~10개 선택해 주세요.')
+                if not isinstance(ids,list) or not 1<=len(ids)<=100 or any(not isinstance(i,str) for i in ids) or len(set(ids))!=len(ids):
+                    raise DataError('서로 다른 공격 시나리오를 1~100개 선택해 주세요.')
+                if len(ids)*repeat > 100:
+                    raise DataError('한 실험의 전체 모델 호출은 최대 100회입니다. 선택 개수 또는 반복 횟수를 줄여 주세요.')
                 inputs=[]
                 for identifier in ids:
                     a=conn.execute('SELECT * FROM attack_scenarios WHERE id=%s AND archived_at IS NULL AND enabled',(uuid(identifier),)).fetchone()
@@ -248,7 +310,12 @@ class Database:
             for row in expired:
                 conn.execute("UPDATE llm_calls SET status='timed_out',error_code='WORKER_INTERRUPTED',completed_at=now() WHERE run_id=%s AND status='sent'",(row['id'],))
             self._refresh_status(conn)
-            row=conn.execute("SELECT r.id FROM runs r WHERE r.status='queued' ORDER BY r.created_at,r.id FOR UPDATE SKIP LOCKED LIMIT 1").fetchone()
+            row=conn.execute('''SELECT r.id FROM runs r
+                JOIN experiment_cases c ON c.id=r.experiment_case_id
+                JOIN experiments e ON e.id=c.experiment_id
+                WHERE r.status='queued'
+                ORDER BY e.created_at,e.id,c.case_number,c.repeat_index,r.id
+                FOR UPDATE OF r SKIP LOCKED LIMIT 1''').fetchone()
             if not row:
                 return None
             rid=str(row['id'])

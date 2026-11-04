@@ -1,6 +1,8 @@
 # 핀코드 · LLM Security Lab
 
-한림대학교 캡스톤디자인 **LLM 프롬프트 인젝션 공격·방어 실험 플랫폼**입니다. 이 `database` 브랜치는 PostgreSQL 데이터 관리와 자체 공격 실행·결과 저장을 연결합니다. BAZE/HAI-GPT로 모델을 호출하며 현재 실행 방어는 OFF입니다.
+> **2026-11-04 main 통합:** 직접·간접 공격별 카테고리 선택과 정상 이메일 반복 설정을 통합합니다. 빈 카테고리의 적용 경로를 저장하고 공통 준비 중 항목은 한 번만 표시합니다. 이후 개발 기준은 `main`입니다. [현재 배포 상태와 인수인계](docs/HANDOFF.md)를 먼저 확인하세요.
+
+한림대학교 캡스톤디자인 **LLM 프롬프트 인젝션 공격·방어 실험 플랫폼**입니다. `main` 브랜치는 PostgreSQL 데이터 관리와 자체 공격 실행·결과 저장을 연결합니다. BAZE/HAI-GPT로 모델을 호출하며 현재 실행 방어는 OFF입니다.
 
 - 팀 저장소: https://github.com/CapstoneFincode/Fincode_web_prototype
 - 비공개 웹: https://fincode-security-lab.tinyhawk128.chatgpt.site
@@ -25,7 +27,7 @@ DB 설정 시 정상 이메일·공격 시나리오 CRUD, 수정 버전 보관, 
 ## 빠른 실행: Python + Docker
 
 ```bash
-git clone --branch database https://github.com/CapstoneFincode/Fincode_web_prototype.git
+git clone --branch main https://github.com/CapstoneFincode/Fincode_web_prototype.git
 cd Fincode_web_prototype
 cp .env.example .env
 ```
