@@ -8,7 +8,7 @@ import * as categoryTools from '../public/categories.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm, '')
-  .replace(/^/, 'const { historicalRuns, attackSeeds, normalSeeds, historicalTypes } = seeds; const { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, selectionPlan } = categoryTools;\n')
+  .replace(/^/, 'const { historicalRuns, attackSeeds, normalSeeds, historicalTypes } = seeds; const { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan } = categoryTools;\n')
   .replace('export function validateImport','function validateImport')
   .replace(/route\(\);\s*refreshConnection\(\);\s*$/, '');
 function app(saved=null,fetcher=()=>{throw new Error('Unexpected API request');}){

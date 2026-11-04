@@ -65,3 +65,23 @@ export function selectionPlan(attacks,categoryIds,categoryCounts={}, {maxScenari
   else if(!error&&runnable.length>maxScenarios)error=`총 ${runnable.length}건을 선택했어요. 한 실험은 최대 ${maxScenarios}개 시나리오까지 지원해요. 카테고리별 개수를 줄여 주세요.`;
   return {rows,runnable,disabled,unsupported,byCategory,calls:runnable.length,error};
 }
+
+export const attackVectors = ['direct','indirect'];
+export const vectorCategoryKey = (vector,id) => `${vector}:${id}`;
+/** Choose independently within each vector/category. Inactive vector inputs are ignored. */
+export function vectorSelectionPlan(attacks,vectorIds,categoryKeys,counts={},options={}){
+  const vectors=attackVectors.filter(v=>vectorIds.includes(v));
+  const seen=new Set();
+  const distinct=attacks.filter((a,i)=>{const id=a.id||a.dbId||i;if(seen.has(id))return false;seen.add(id);return true;});
+  const plans=vectors.map(vector=>{
+    const ids=[...new Set(categoryKeys.filter(k=>k.startsWith(vector+':')).map(k=>k.slice(vector.length+1)))];
+    const amounts=Object.create(null);
+    for(const id of ids){const key=vectorCategoryKey(vector,id);if(Object.hasOwn(counts,key))amounts[id]=counts[key];}
+    const result=selectionPlan(distinct.filter(a=>a.vector===vector),ids,amounts,options);
+    return {...result,vector,byCategory:result.byCategory.map(c=>({...c,vector,key:vectorCategoryKey(vector,c.id)}))};
+  });
+  const byCategory=plans.flatMap(p=>p.byCategory),runnable=plans.flatMap(p=>p.runnable);
+  let error=!vectors.length?'직접 공격 또는 간접 공격을 선택해 주세요.':plans.find(p=>p.error)?.error||'';
+  if(!error&&runnable.length>(options.maxScenarios??100))error=`총 ${runnable.length}건을 선택했어요. 한 실험은 최대 ${options.maxScenarios??100}개 시나리오까지 지원해요. 경로별 개수를 줄여 주세요.`;
+  return {vectors:plans,byCategory,runnable,rows:plans.flatMap(p=>p.rows),calls:runnable.length,disabled:plans.reduce((n,p)=>n+p.disabled,0),unsupported:plans.reduce((n,p)=>n+p.unsupported,0),error};
+}
