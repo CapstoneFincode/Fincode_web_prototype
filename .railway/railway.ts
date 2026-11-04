@@ -7,7 +7,7 @@ import { defineRailway, github, postgres, project, service } from "railway/iac";
 export default defineRailway((ctx) => {
   const db = postgres("Postgres");
   const api = service("fincode-api", {
-    source: github("CapstoneFincode/Fincode_web_prototype", { branch: "database" }),
+    source: github("CapstoneFincode/Fincode_web_prototype", { branch: "main" }),
     start: "python -m backend.start",
     healthcheck: "/api/ready",
     healthcheckTimeout: 300,
