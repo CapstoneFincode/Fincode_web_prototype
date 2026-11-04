@@ -57,7 +57,7 @@ function app({saved=null,preview=false,cryptoApi=webcrypto,elements={},queryList
   const context=vm.createContext({toasts,seeds,categoryTools,structuredClone,crypto:cryptoApi,console,setTimeout,clearTimeout,AbortController,
     FormData:class {constructor(form){this.values=form.values||{}} get(key){return this.values[key]??null;} [Symbol.iterator](){return Object.entries(this.values)[Symbol.iterator]();}},
     fetch:fetcher,localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem:(key,value)=>writes.push({key,value:JSON.parse(value)})},
-    document:{querySelector:s=>s.startsWith('meta[')?preview?{}:null:elements[s]||null,querySelectorAll:s=>queryLists[s]||[],getElementById:id=>elements['#'+id]||null,addEventListener(){}},
+    document:{querySelector:s=>s.startsWith('meta[')?preview&&s.includes('name="fincode-preview"')?{}:null:elements[s]||null,querySelectorAll:s=>queryLists[s]||[],getElementById:id=>elements['#'+id]||null,addEventListener(){}},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#experiments'}});
   vm.runInContext(source+`\nshell=()=>{};renderRuntime=()=>{};toast=(msg)=>toasts.push(msg);refreshJobs=async()=>{};showDatabaseExperiment=async()=>{};
   state.vectorIds=['direct'];globalThis.api={state,bindVectorPicker,currentAttackPlan,categoryCards,categoryForm,categoryScopeForm,pages,validateImport,filteredData,adoptDatabase,persist,refreshConnection,submitDatabaseExperiment,recordForm,savePlan,categorySelectionSummary,bindCategoryPicker,bindPage,actions};`,context);
