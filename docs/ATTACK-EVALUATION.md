@@ -2,6 +2,22 @@
 
 2026-11-04 구현. main 병합 및 운영 Railway/Sites 배포는 하지 않았다.
 
+## 직접 확인할 테스트 화면
+
+별도 owner-private 테스트 사이트: https://fincode-attacktest.xogus090721.chatgpt.site
+
+`preview/attacktest`는 응답을 붙여 넣거나 예시를 선택해 판정하는 정적 검토 화면이다.
+브라우저 판정기는 `backend/evaluation.py`의 검토용 포팅이며, `python tests/preview-parity.py`로
+92개 입력의 전체 결과 객체를 대조했다. 운영 실행은 기존 Python 서버가 판정한다.
+실제 모델 호출이나 운영 DB 연결은 없으며 시나리오 저장은 해당 사이트의 localStorage를 사용한다.
+저장 후 데이터 관리 화면 → 공격 시나리오에서 동일 레코드의 판정 방식/수정 UI를 확인할 수 있다.
+시스템 지침 입력은 테스트 전용이며 서버 프롬프트 설정을 변경하지 않는다.
+
+패키징: `python scripts/package-attacktest-preview.py --output /절대경로/dist`.
+이는 신규 독립 Sites 체크아웃의 static.directory로 배포하며 기존 운영 Sites manifest를 재사용하지 않는다.
+원본 `public` UI를 복사하고 모델 호출을 막는 기존 preview 모드로 실행한다.
+`provenance.json`에 패키징 당시 attacktest 소스 커밋과 테스트 환경 구분을 남긴다.
+
 ## 사용 흐름
 
 1. 데이터 관리 → 공격 시나리오 → 추가 또는 기존 사용자 시나리오 수정.

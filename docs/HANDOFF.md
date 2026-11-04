@@ -8,6 +8,7 @@
 - 검증: JS 75/75, Python 65/65(격리 PGlite + psycopg, 모의 모델), 구문/diff 및 빌드 통과. 브라우저 preview는 연결 오류로 미검증이다.
 - 이번 작업은 cobas67 계정으로 attacktest에만 저장한다. main 병합, Railway/Sites 배포, 실모델 호출은 수행하지 않았다.
 - 자세한 범위/호환성/적용 방법: [ATTACK-EVALUATION.md](ATTACK-EVALUATION.md).
+- 독립 테스트 화면: https://fincode-attacktest.xogus090721.chatgpt.site. 원문 유출 등 예시/직접 입력 판정과 시나리오 브라우저 저장을 지원한다. 운영 DB·모델 API는 연결하지 않는다. 사이트 ID `appgprj_6aeacbc31c4c81918451d196b6baae93`를 유지한다. browser/Python 판정 결과 92개 전체 객체 대조 통과. 브라우저 미리보기는 연결/관찰 제한으로 검증하지 못했다.
 
 ---
 
