@@ -1,4 +1,16 @@
-# 최신 작업: attacktest → main 통합 검증 — 2026-11-04
+# 최신 작업: 공격 판정·결과 화면 운영 배포 완료 — 2026-11-04
+
+- 사용자 요청에 따라 PR #3의 main 통합 커밋 `7d62fa55a83f55e3f3900a874103a57a8ff996fd`를 Railway 백엔드와 기존 운영 사이트에 배포했다. 이후 개발 기준은 최신 main이며 아래 배포 보류 기록은 과거 상태다.
+- Railway fincode-api/production: 위 커밋에 고정. 배포 `f6e4698c-e6b0-43f9-ba85-6eb8e489a89b` SUCCESS, staged 변경 없음. API `/api/ready` 및 사이트를 통한 DB 연결 확인. `/api/data`에서 manual/exact/canary/system_prompt_leak 지원 확인.
+- 운영 웹: https://fincode-security-lab.xogus090721.chatgpt.site. Sites 소스 `a37a73b81070723adc7230e7e2ffa474a765b914`, 배포 `appgdep_6aeae07a717c8191ad6f569626d044e5` succeeded. 저장 버전 `appgprj_6acc6daad91c8191931bddebb0cc597a~appgver_a3660be230348191bb8aff2b42009f23`. 기존 소유자 전용 접근과 환경 revision 2를 유지했다.
+- 배포 전 API 스냅샷: 정상 이메일 5건, 공격 시나리오 9건, 실험 24개/실행 38개, 대기·실행 중 0건. 배포 후 데이터 및 각 실험 상세의 기존 필드가 모두 그대로임을 대조했다. 새 API 메타데이터 필드의 추가만 허용한 비교이며 전체 PostgreSQL 물리 백업은 아니다. 운영 DB에 테스트 데이터 쓰기나 과거 재판정은 수행하지 않았다.
+- GitHub 배포 커밋과 Sites 소스의 추적 파일 110개 일치, 배포용 빌드 통과. 운영 HTTP 응답의 app.js/categories.js/data.js/style.css/attack-results.js/attack-results.css/index.html 7개를 소스와 바이트 단위 대조했다. 비밀 및 원문 데이터가 없는 확인 결과는 `docs/verification/2026-11-04-attack-release.json`에 기록했다.
+- 실제 유료 모델 호출은 하지 않았다. 브라우저는 운영 사이트의 로그인 화면까지만 확인했으며 로그인 후 클릭 QA는 미완료다. 판정 규칙의 범위와 한계는 ATTACK-EVALUATION.md를 따른다.
+- 기존 시나리오의 판정 방식은 자동 변경하지 않는다. canary를 쓰려면 데이터 관리에서 해당 시나리오를 수정하거나 복사하고 새 실험을 실행한다. 이 배포 기록을 추가한 후속 문서 커밋은 운영을 재배포하지 않는다.
+
+---
+
+# 이전 작업: attacktest → main 통합 검증 — 2026-11-04
 
 - 사용자 요청에 따라 지금까지의 공격 성공 판정·시나리오 저장·카테고리별 결과 화면을 main으로 통합한다. 아래 과거 기록의 attacktest 전용/main 병합 보류 지침은 이번 요청으로 해제되었다. 후속 작업은 최신 main을 기준으로 한다.
 - 검토 기준: main `cff0754e96629e7e177d3e7f3f9b18285d84406f`, 기능 커밋 `713559760785844733eb9fd20636492401484d1b`. main은 기능 브랜치의 조상이며 병합 충돌이 없다. 통합 준비에서는 문서만 정리했다.

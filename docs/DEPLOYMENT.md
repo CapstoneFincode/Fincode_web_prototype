@@ -1,4 +1,15 @@
-# 현재 운영 전환 — 2026-11-04
+# 현재 운영 배포: 공격 성공 판정·카테고리별 결과 — 2026-11-04
+
+아래 이전 기록보다 이 절을 우선한다. 기능 커밋 `7d62fa55a83f55e3f3900a874103a57a8ff996fd`를 배포했다.
+
+- Railway `fincode-api`/`production`은 위 main 커밋에 고정. 배포 `f6e4698c-e6b0-43f9-ba85-6eb8e489a89b` SUCCESS. staged 변경 없음. 기존 PostgreSQL, 환경변수, 자원 및 도메인 설정 유지.
+- 운영 사이트: https://fincode-security-lab.xogus090721.chatgpt.site. 소스 `a37a73b81070723adc7230e7e2ffa474a765b914`, 배포 `appgdep_6aeae07a717c8191ad6f569626d044e5` succeeded. 소유자 전용 접근 및 환경 revision 2 유지.
+- 새 migration은 없다. 정상 5건/공격 9건 및 기존 실험 24개/실행 38개의 기존 저장 필드를 배포 전후 대조했다. API 준비 상태, DB 연결, 4개 판정 방식 지원, 운영 정적 파일 7개 일치를 확인했다. 실모델 호출과 로그인 후 브라우저 클릭 검증은 하지 않았다.
+- 후속 문서 커밋은 자동 배포하지 않는다. 다음 배포도 검증한 main 커밋으로 고정값을 갱신하고 백엔드 → 지원 기능 조회 → 프론트엔드 순서로 적용한다. 상세: HANDOFF.md 및 `docs/verification/2026-11-04-attack-release.json`.
+
+---
+
+# 이전 운영 전환 — 2026-11-04
 
 이 절이 아래 10월 기록보다 우선한다. 이후 개발 브랜치는 main이다.
 

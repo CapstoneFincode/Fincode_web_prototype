@@ -1,6 +1,6 @@
 # 핀코드 · LLM Security Lab
 
-> **공격 실험 main 통합 — 2026-11-04:** 판정 방식 선택, 시스템 프롬프트 원문 유출·canary 문맥 판정, 카테고리별 성공률과 프롬프트/응답 상세를 통합합니다. DB migration은 없으며 운영 Railway/Sites 배포는 별도입니다. [사용법·판정 범위·검증](docs/ATTACK-EVALUATION.md)과 [최신 인수인계](docs/HANDOFF.md)를 확인하세요.
+> **공격 실험 main 통합·운영 배포 완료 — 2026-11-04:** 판정 방식 선택, 시스템 프롬프트 원문 유출·canary 문맥 판정, 카테고리별 성공률과 프롬프트/응답 상세를 운영 Railway/Sites에 반영했습니다. 기능 커밋은 `7d62fa5`이며 DB migration은 없습니다. [사용법·판정 범위·검증](docs/ATTACK-EVALUATION.md)과 [최신 인수인계](docs/HANDOFF.md)를 확인하세요.
 
 > **2026-11-04 main 통합:** 직접·간접 공격별 카테고리 선택과 정상 이메일 반복 설정을 main에 병합하고 운영 반영했습니다. 빈 카테고리의 적용 경로를 저장하고 공통 준비 중 항목은 한 번만 표시합니다. 이후 개발 기준은 `main`입니다. [현재 배포 상태와 인수인계](docs/HANDOFF.md)를 먼저 확인하세요.
 

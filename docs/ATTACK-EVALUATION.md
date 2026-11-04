@@ -1,6 +1,6 @@
 # 공격 성공 판정과 카테고리별 결과
 
-2026-11-04 구현 및 main 통합 검증. 운영 Railway/Sites 배포는 별도이며 최신 상태는 [HANDOFF.md](HANDOFF.md)를 따른다.
+2026-11-04 main 통합 및 운영 Railway/Sites 배포 완료. 기능 커밋은 `7d62fa5`이며 배포·검증 상세는 [HANDOFF.md](HANDOFF.md)를 따른다.
 
 ## 직접 확인할 테스트 화면
 
