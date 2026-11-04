@@ -1,17 +1,18 @@
-# 공격 성공 판정 — attacktest
+# 공격 성공 판정과 카테고리별 결과
 
-2026-11-04 구현. main 병합 및 운영 Railway/Sites 배포는 하지 않았다.
+2026-11-04 구현 및 main 통합 검증. 운영 Railway/Sites 배포는 별도이며 최신 상태는 [HANDOFF.md](HANDOFF.md)를 따른다.
 
 ## 직접 확인할 테스트 화면
 
 별도 owner-private 테스트 사이트: https://fincode-attacktest.xogus090721.chatgpt.site
 
-`preview/attacktest`는 응답을 붙여 넣거나 예시를 선택해 판정하는 정적 검토 화면이다.
-브라우저 판정기는 `backend/evaluation.py`의 검토용 포팅이며, `python tests/preview-parity.py`로
-92개 입력의 전체 결과 객체를 대조했다. 운영 실행은 기존 Python 서버가 판정한다.
+첫 화면은 기존 **공격 실험** 화면이다. 저장된 공격 시나리오를 경로·카테고리·개수로 선택하고
+**선택 시나리오 결과 미리보기**에서 예시 응답과 판정을 확인한다. 프롬프트/응답을 새로 작성할 필요는 없다.
 실제 모델 호출이나 운영 DB 연결은 없으며 시나리오 저장은 해당 사이트의 localStorage를 사용한다.
-저장 후 데이터 관리 화면 → 공격 시나리오에서 동일 레코드의 판정 방식/수정 UI를 확인할 수 있다.
-시스템 지침 입력은 테스트 전용이며 서버 프롬프트 설정을 변경하지 않는다.
+예시 실험 결과는 메모리에만 보관한다. 실제 실험은 API·DB가 연결된 운영 환경에서 실행한다.
+응답을 직접 붙여 넣는 개발자용 판정 도구는 `/judge.html`로 분리했다. 지침 입력도 테스트 전용이다.
+브라우저 판정기는 `backend/evaluation.py`와 `backend/canary.py`의 검토용 포팅이며,
+`python tests/preview-parity.py`로 166개 입력의 전체 결과 객체를 대조했다. 운영 실행은 Python 서버가 판정한다.
 
 패키징: `python scripts/package-attacktest-preview.py --output /절대경로/dist`.
 이는 신규 독립 Sites 체크아웃의 static.directory로 배포하며 기존 운영 Sites manifest를 재사용하지 않는다.
@@ -22,7 +23,7 @@
 
 1. 데이터 관리 → 공격 시나리오 → 추가 또는 기존 사용자 시나리오 수정.
 2. 성공 판정 기준을 설명하고 자동 성공 판정 방식을 선택한다.
-3. 전체 응답 일치만 예상 응답(최대 2,000자)을 입력한다. 원문 유출은 실행 당시 지침을 자동 참조한다.
+3. 전체 응답 일치는 예상 응답(최대 2,000자), canary는 고유 표식(8~128자)을 입력한다. 원문 유출은 실행 당시 지침을 자동 참조한다.
 4. 공격 실험을 실행하고 결과 보기에서 판정, 근거, 일치 구간과 판정기 버전을 확인한다.
 5. 필요한 경우 근거를 적어 수동 판정을 추가한다. 자동 판정 이력은 유지하고 최신 수동 판정이 우선한다.
 
@@ -37,9 +38,10 @@
 | --- | --- | --- |
 | `manual` | 자동 판정 생략 | 수동 검토 시 `manual-v1` |
 | `exact` | 앞뒤 공백을 제거한 전체 응답 일치 | `exact-trim-v1` |
+| `canary` | 고유 표식의 독립 출력과 거부·인용 문맥 구분 | `canary-context-v1` |
 | `system_prompt_leak` | 실행 당시 애플리케이션 지침의 전체 원문 노출 | `system-prompt-leak-v1` |
 
-`criterion`은 설명, `expectedOutput`은 전체 일치에만 쓰인다. 다른 방식은 예상 응답을 빈 문자열로 저장한다.
+`criterion`은 설명, `expectedOutput`은 전체 일치와 canary에 쓰인다. 다른 방식은 예상 응답을 빈 문자열로 저장한다.
 새 등록에서 `evaluationMode`가 없으면 이전 API처럼 예상 응답 유무로 exact/manual을 결정한다.
 수정에서 필드가 없으면 현재 판정 방식을 보존한다. 명시한 알 수 없는 값은 400 오류다.
 조회는 각 시나리오의 `evaluationMode`와 최상위 `evaluationModes` 지원 목록을 반환한다.
@@ -86,7 +88,7 @@ FINCODE_TEST_DATABASE_URL=postgresql://... python -m unittest discover -s backen
 npm run build
 ```
 
-이번 검증: JavaScript 75/75, Python 65/65(건너뜀 없음), 구문/diff 검사 및 빌드 통과.
+main 통합 검증: JavaScript 93/93, Python 71/71(건너뜀 없음), Python/브라우저 판정 객체 166/166, 구문/diff 검사 및 빌드 통과.
 DB 통합 검증은 로컬 PGlite PostgreSQL/WASM의 TCP 서버(max-connections=8)와 psycopg로 수행했다.
 운영 Railway PostgreSQL 18에서 실행한 검증은 아니다. 모델 HTTP는 MockTransport를 사용했고 유료 모델 호출은 없다.
 UI 저장/수정/복사/복원, 구형 서버 방지, HTML escape, 수동 우선순위, 커버리지 집계를 검사했다.
@@ -122,11 +124,10 @@ DB 검증은 판정 방식 저장·조회·수정, 실행 중 수정 후 기준 
 실제 전송 프롬프트는 `llm_calls.request_snapshot.messages`, 호출 기록 없는 실행은 `input_snapshot.messages`를 **실행 예정**으로 구분하여 표시한다.
 응답과 지침은 코드로 실행하거나 HTML로 해석하지 않는다. 거부 표현/원문과 다른 지침 주장 신호는 보조 정보로 유지한다.
 
-추가 검증 후 전체 JavaScript 83/83, Python 66/66, Python/browser 판정 객체 대조 92/92, 빌드 통과.
-별도 테스트 사이트의 `results.html`은 실제 DB 결과와 같은 UI 컴포넌트에 자체 예시 9건을 연결하며 실제 모델·DB 호출은 없다.
+별도 테스트 사이트도 실제 DB 결과와 같은 UI 컴포넌트를 사용한다. `results.html`의 이전 링크는 기존 공격 실험 화면으로 이동하며, 선택한 저장 시나리오로 예시 결과를 구성한다. 실제 모델·DB 호출은 없다.
 
 ### 운영 반영
 
-attacktest 검토 후 백엔드와 프론트엔드를 함께 반영한다. 배포할 경우 백엔드를 먼저 업데이트한다.
+검증한 main 통합 커밋으로 백엔드와 프론트엔드를 반영한다. 배포할 경우 백엔드를 먼저 업데이트하고 지원 판정 방식 조회를 확인한 뒤 프론트엔드를 업데이트한다.
 기존 DB와 실험 기록을 변경하는 migration이나 데이터 변환은 필요하지 않다.
 판정 방식이 exact/manual인 기존 유출 시나리오는 사용자가 수정 화면에서 `system_prompt_leak`를 선택하고 새 실험을 실행해야 한다.
