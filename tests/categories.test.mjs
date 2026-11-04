@@ -57,7 +57,7 @@ function app({saved=null,preview=false,cryptoApi=webcrypto,elements={},queryList
   const context=vm.createContext({toasts,seeds,categoryTools,structuredClone,crypto:cryptoApi,console,setTimeout,clearTimeout,AbortController,
     FormData:class {constructor(form){this.values=form.values||{}} get(key){return this.values[key]??null;} [Symbol.iterator](){return Object.entries(this.values)[Symbol.iterator]();}},
     fetch:fetcher,localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem:(key,value)=>writes.push({key,value:JSON.parse(value)})},
-    document:{querySelector:s=>s.startsWith('meta[')?preview?{}:null:elements[s]||null,querySelectorAll:s=>queryLists[s]||[],getElementById:id=>elements['#'+id]||null,addEventListener(){}},
+    document:{querySelector:s=>s.startsWith('meta[')?preview&&s.includes('name="fincode-preview"')?{}:null:elements[s]||null,querySelectorAll:s=>queryLists[s]||[],getElementById:id=>elements['#'+id]||null,addEventListener(){}},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#experiments'}});
   vm.runInContext(source+`\nshell=()=>{};renderRuntime=()=>{};toast=(msg)=>toasts.push(msg);refreshJobs=async()=>{};showDatabaseExperiment=async()=>{};
   state.vectorIds=['direct'];globalThis.api={state,bindVectorPicker,currentAttackPlan,categoryCards,categoryForm,categoryScopeForm,pages,validateImport,filteredData,adoptDatabase,persist,refreshConnection,submitDatabaseExperiment,recordForm,savePlan,categorySelectionSummary,bindCategoryPicker,bindPage,actions};`,context);
@@ -162,7 +162,8 @@ test('DOM count input updates selection, supports prototype-like category IDs, a
 test('local edits preserve original registration metadata while new records and copies receive a timestamp',async()=>{
   let submit;const form={values:{name:'Edited attack',categoryId:'instruction-override',vector:'direct',channel:'input',technique:'test',goal:'test',payload:'test',criterion:'test',expectedOutput:''},addEventListener:(event,callback)=>{submit=callback;}};
   const modal={open:false,innerHTML:'',showModal(){this.open=true;},close(){this.open=false;}};
-  const {api:a}=app({elements:{'#modal':modal,'#record-form':form,'#form-error':{textContent:''}}});Object.assign(a.state,{tab:'attacks',dbChecked:true,attacks:[row('dated',{provenance:'user',registeredAt:'2026-10-20T10:00:00Z'}),row('legacy',{provenance:'user'}),row('sample')]});
+  form.values.evaluationMode='manual';
+  const {api:a}=app({elements:{'#modal':modal,'#record-form':form,'#form-error':{textContent:''},'#f-evaluationMode':{value:'manual',addEventListener(){}},'#expected-output-field':{},'#f-expectedOutput':{},'#evaluation-hint':{}}});Object.assign(a.state,{tab:'attacks',dbChecked:true,attacks:[row('dated',{provenance:'user',registeredAt:'2026-10-20T10:00:00Z'}),row('legacy',{provenance:'user'}),row('sample')]});
   for(const id of ['dated','legacy']){a.recordForm(id);await submit({preventDefault(){},target:form});}
   assert.equal(a.state.attacks[0].registeredAt,'2026-10-20T10:00:00Z');assert.equal(a.state.attacks[1].registeredAt,undefined);assert.deepEqual(Array.from(a.state.attacks,r=>r.id),['dated','legacy','sample']);
   a.recordForm('sample');await submit({preventDefault(){},target:form});assert.equal(a.state.attacks.length,4);assert.ok(Number.isFinite(Date.parse(a.state.attacks[3].registeredAt)));assert.equal(a.state.attacks[2].registeredAt,undefined);
