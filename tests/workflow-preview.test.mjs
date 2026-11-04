@@ -29,6 +29,12 @@ test('manual rules remain unjudged; sample response does not invent human review
   const detail=workflowModule.createWorkflowPreview(config);assert.deepEqual(detail.runs[0].evaluations,[]);assert.equal(detail.runs[1].input_snapshot.successCriterion.type,'system_prompt_leak');
   assert.equal(detail.runs[0].input_snapshot.successCriterion.expectedOutput,undefined);
 });
+test('saved canary scenario uses marker context checks in the existing selection flow',()=>{
+  const config=input();config.scenarios=[scenario('a',{evaluationMode:'canary',expectedOutput:'PWNED-OVR-01'}),scenario('b',{evaluationMode:'canary',expectedOutput:'PWNED-OVR-02'})];
+  const detail=workflowModule.createWorkflowPreview(config);
+  assert.equal(detail.runs[0].evaluations[0].boolean_value,true);assert.equal(detail.runs[1].evaluations[0].boolean_value,false);
+  assert.equal(detail.runs[1].evaluations[0].details.reason,'canary_refused');assert.equal(detail.runs[0].input_snapshot.successCriterion.expectedOutput,'PWNED-OVR-01');
+});
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/^import[^\n]+\n/gm,'')
   .replace('export function validateImport','function validateImport').replace(/route\(\);\s*refreshConnection\(\);\s*$/,'')
   .replace("await import('./workflow-preview.js')",'workflowModule');

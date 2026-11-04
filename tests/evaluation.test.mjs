@@ -86,6 +86,20 @@ test('judgment evidence and matched text are escaped in result cards',()=>{
   assert.match(a.evaluationResult({decision_status:'indeterminate',boolean_value:null,details:{}}),/미확정/);
 });
 
+test('canary field, browser save and backup preserve the marker and reject weak markers',async()=>{
+  const {api:a,elements:e,form,writes}=setup();a.bindEvaluationFields();e['#f-evaluationMode'].value='canary';e['#f-evaluationMode'].listeners.change();
+  assert.equal(e['#expected-output-field'].hidden,false);assert.equal(e['#f-expectedOutput'].required,true);assert.equal(e['#f-expectedOutput'].maxLength,128);assert.match(e['#evaluation-hint'].textContent,/인용/);
+  Object.assign(form.values,{evaluationMode:'canary',expectedOutput:'PWNED-OVR-01'});a.recordForm();await form.listeners.submit({preventDefault(){},target:form});
+  assert.equal(a.state.attacks.at(-1).expectedOutput,'PWNED-OVR-01');assert.equal(setup({saved:writes.at(-1)}).api.state.attacks.at(-1).evaluationMode,'canary');
+  for(const marker of ['승인 완료','MARKER','12345678','PWNED-01\n']){const data=backup();Object.assign(data.attacks[0],{evaluationMode:'canary',expectedOutput:marker});assert.throws(()=>a.validateImport(data));}
+});
+
+test('canary mode cannot be sent to an old backend while older modes remain available',async()=>{
+  const {api:a,form,elements:e}=setup();Object.assign(a.state,{dbConfigured:true,dbReady:true,dbCategorySupport:true,dbEvaluationSupport:true,dbEvaluationModes:['manual','exact','system_prompt_leak']});
+  assert.match(a.evaluationFields({}),/value="canary"[^>]*disabled/);
+  a.recordForm();Object.assign(form.values,{evaluationMode:'canary',expectedOutput:'PWNED-OVR-01'});await form.listeners.submit({preventDefault(){},target:form});assert.match(e['#form-error'].textContent,/백엔드/);
+});
+
 test('stored attack detail opens shared report with manual review; normal detail keeps original layout',async()=>{
   const detail={experiment:{name:'실제 DB 상세',purpose:'attack',status:'completed'},runs:[{id:'run-1',expected_label:'attack',status:'succeeded',requested_model:'model',evaluations:[],input_snapshot:{attackCategoryId:'leak',attackScenario:{name:'유출 시도',key:'scenario-1',categoryId:'leak',categoryName:'시스템 지침 유출'}},calls:[{purpose:'summarize',request_snapshot:{messages:[{role:'user',content:'실제 전송한 프롬프트'}]}}],final_output:'저장된 모델 응답'}]};
   const {api:a,elements:e,toasts}=setup({fetcher:async path=>{assert.equal(path,'/api/experiments/experiment-1');return {ok:true,json:async()=>detail};}});

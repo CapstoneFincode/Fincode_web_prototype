@@ -11,7 +11,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from backend.evaluation import EVALUATION_MODES, LEAK_VERSION, evaluate_attack
+from backend.evaluation import EVALUATION_MODES, LEAK_VERSION, CANARY_VERSION, valid_canary, evaluate_attack
 
 
 class DataError(Exception):
@@ -178,8 +178,12 @@ class Database:
                 raise DataError('지원하는 판정 방식을 선택해 주세요.',400,'INVALID_EVALUATION_MODE')
             if mode == 'exact' and not expected.strip():
                 raise DataError('전체 응답 일치 판정에는 예상 응답이 필요합니다.',400,'EXPECTED_OUTPUT_REQUIRED')
+            if mode == 'canary' and not valid_canary(expected):
+                raise DataError('성공 표식은 영문·숫자·하이픈·밑줄 8~128자이며 영문과 숫자를 각각 포함해야 합니다.',400,'INVALID_CANARY')
             criterion = {'description':text(data.get('criterion'),'판정 기준'),
-                         'expectedOutput':expected if mode == 'exact' else '', 'type':mode}
+                         'expectedOutput':expected if mode in ('exact','canary') else '', 'type':mode}
+            if mode == 'canary':
+                criterion.update(scope='canary_emission', policy='conservative-emission-v1')
             if mode == 'system_prompt_leak':
                 criterion.update(scope='full_system_prompt', normalization='nfc-ascii-whitespace-v1')
             insert(conn,'attack_scenarios',dict(**common, scenario_key=key, category_id=category_id, name=text(data.get('name'),'이름',200), vector=vector,
@@ -241,7 +245,7 @@ class Database:
         now=datetime.now(timezone.utc)
         insert(conn,'experiments',dict(id=eid,name=text(data.get('name','이메일 요약'),'실험 이름',200),purpose=data.get('kind','summary'),
             status='running' if immediate else 'queued',evaluation_policy={'automatic':'scenario-rule-v1',
-                'rules':{'exact':'exact-trim-v1','system_prompt_leak':LEAK_VERSION},
+                'rules':{'exact':'exact-trim-v1','canary':CANARY_VERSION,'system_prompt_leak':LEAK_VERSION},
                 'manual':'latest-human-per-metric','qualityRequired':False},
             execution_plan={'repeat':data.get('repeat',1),'concurrency':1,'automaticRetries':0},
             environment_snapshot={'runtime':'python-fastapi','promptVersion':config['version']},created_by=self.actor,

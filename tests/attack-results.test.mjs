@@ -40,7 +40,7 @@ test('category, outcome and prompt/response search compose without changing over
 });
 test('all attacker-controlled strings are text, never executable HTML',()=>{
   const payload='<img src=x onerror=alert(1)>';
-  const r=run('" onclick="boom','leak',true,{final_output:payload,requested_model:payload,evaluations:[{...verdict(true),evidence:payload,details:{match:{text:payload}}}],calls:[{purpose:'summarize',request_snapshot:{messages:[{role:'system',content:payload},{role:'user',content:payload}]}}]});
+  const r=run('" onclick="boom','leak',true,{final_output:payload,requested_model:payload,evaluations:[{...verdict(true),evidence:payload,details:{match:{text:payload},occurrences:[{kind:"quoted_or_reported",start:0,end:12,context:payload}]}}],calls:[{purpose:'summarize',request_snapshot:{messages:[{role:'system',content:payload},{role:'user',content:payload}]}}]});
   r.input_snapshot.attackScenario.name=payload;r.input_snapshot.attackScenario.categoryName=payload;
   const html=renderAttackReport({runs:[r]},{query:''});
   assert.doesNotMatch(html,/<img|<script|" onclick="boom/);assert.match(html,/&lt;img/);assert.match(html,/SYSTEM/);assert.match(html,/RESPONSE/);
