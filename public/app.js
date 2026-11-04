@@ -1,4 +1,5 @@
 import { historicalRuns, attackSeeds, normalSeeds, historicalTypes } from './data.js';
+import { mountAttackReport } from './attack-results.js';
 import { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, categoryScopes, categoryScope, categoryLayout, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan } from './categories.js';
 
 const evaluationLabels={manual:'수동 판정',exact:'전체 응답 일치',system_prompt_leak:'시스템 프롬프트 원문 유출'};
@@ -68,7 +69,7 @@ const defenseName=d=>({off:'방어 미적용',filter:'입력 탐지 · 후보',s
 const gtCount=()=>state.normal.filter(x=>x.provenance!=='sample'&&x.reviewStatus==='reviewed').length;
 const shortModel=m=>m.replace('gemini-','Gemini ').replace('deepseek-v4-flash','DeepSeek V4 Flash').replace('deepseek-flash','DeepSeek Flash').replace('flash-lite','Flash Lite');
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),4200);}
-function modal(title,body,actions=''){const d=$('#modal');d.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2><button class="icon-button" data-action="close-modal" aria-label="닫기">${icon('close')}</button></div><div class="dialog-body">${body}</div>${actions?`<div class="dialog-actions">${actions}</div>`:''}`;d.showModal();}
+function modal(title,body,actions='',className=''){const d=$('#modal');d.className=className;d.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2><button class="icon-button" data-action="close-modal" aria-label="닫기">${icon('close')}</button></div><div class="dialog-body">${body}</div>${actions?`<div class="dialog-actions">${actions}</div>`:''}`;d.showModal();}
 function download(name,content,type='application/json'){const b=new Blob([content],{type});const url=URL.createObjectURL(b);const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
 function exportData(){download('fincode-data.json',JSON.stringify({schemaVersion:1,exportedAt:new Date().toISOString(),normal:state.normal,attacks:state.attacks,categories:state.categories,plans:state.plans,notes:state.notes},null,2));toast('이 브라우저의 데이터를 JSON으로 내보냈어요.');}
 function exportCSV(){const rows=filteredResults();const headers=['date','model','attack_types','attempts','successes','asr_percent','source','review_note'];const line=r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',');download('fincode-historical-results.csv','\ufeff'+[line(headers),...rows.map(r=>line([r.date,r.model,r.types,r.attempts,r.successes,r.asr,r.source,r.reviewNote]))].join('\r\n'),'text/csv;charset=utf-8');}
@@ -287,9 +288,26 @@ function evaluationResult(verdict){
   const signal={refusal_hint:'거부 표현 감지 · 보조 정보',unverified_instruction_claim:'원문과 일치하지 않는 지침 주장 · 보조 정보',no_match:'원문 일치 없음'}[verdict.details?.responseSignal];
   return `<div class="evaluation-result"><h3>유효 판정 ${tag(label,known?(verdict.boolean_value?'amber':'green'):'blue')}</h3><p>${esc(verdict.evidence)}</p><p class="small muted">${verdict.judge_type==='human'?'수동 검토':'규칙 판정'} · ${esc(verdict.evaluator_version)}${signal?' · '+esc(signal):''}</p>${verdict.details?.match?`<details><summary>일치한 원문 구간 확인</summary><pre>${esc(verdict.details.match.text)}</pre><p class="small muted">설정된 문자 정규화 후 비교한 구간이에요.</p></details>`:''}<p class="small muted">최신 수동 판정이 있으면 자동 판정보다 우선해요.</p></div>`;
 }
+let attackReportState={id:null,view:{}};
+function attackReviewForm(run){
+  if(!['succeeded','blocked'].includes(run.status))return '';
+  const v=effectiveVerdict(run,'attack_success');
+  return `<details class="ar-manual"><summary>수동 검토 · 판정 수정</summary><form class="db-judgment" data-run="${esc(run.id)}" data-metric="attack_success"><p>최신 수동 판정이 자동 판정보다 우선해요. 변경은 판정 이력으로 남아요.</p><div class="field"><label for="verdict-${esc(run.id)}">공격 목표를 달성했나요?</label><select id="verdict-${esc(run.id)}" name="value"><option value="" ${v?.boolean_value==null?'selected':''}>미확정</option><option value="true" ${v?.boolean_value===true?'selected':''}>공격 성공</option><option value="false" ${v?.boolean_value===false?'selected':''}>공격 실패</option></select></div><div class="field"><label for="evidence-${esc(run.id)}">판정 근거</label><textarea id="evidence-${esc(run.id)}" name="evidence" required maxlength="3000"></textarea></div><button class="btn" type="submit">수동 판정 저장</button></form></details>`;
+}
+function bindDatabaseJudgments(root,id){
+  $$('.db-judgment',root).forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const f=new FormData(form);const button=$('button',form);button.disabled=true;try{await dbApi('/api/runs/'+form.dataset.run+'/evaluations','POST',{metric:form.dataset.metric,value:f.get('value')===''?null:f.get('value')==='true',source:f.get('source'),evidence:f.get('evidence')});await showDatabaseExperiment(id);toast('판정 이력을 저장했어요.');}catch(error){toast(error.message);button.disabled=false;}}));
+}
 async function showDatabaseExperiment(id){
   try{
     const detail=await dbApi('/api/experiments/'+encodeURIComponent(id));const {experiment,runs}=detail;
+    if(experiment.purpose==='attack'){
+      if(attackReportState.id!==id)attackReportState={id,view:{}};
+      if($('#modal').open)$('#modal').close();
+      modal(experiment.name,`<p class="small muted">${tag(jobStatus(experiment.status))} ${tag('보안 OFF')} ${tag('DB 보관')} · 카테고리를 선택한 뒤 실행 로그를 펼쳐 보세요.</p><div id="attack-report-root"></div>`,`<button class="btn" data-action="db-detail" data-id="${esc(id)}">상태 새로고침</button><button class="btn" id="db-export">실험 JSON 내보내기</button>`,'attack-report-modal');
+      mountAttackReport($('#attack-report-root'),detail,{categories:state.categories,initialView:attackReportState.view,onViewChange:view=>{attackReportState={id,view};},renderReview:attackReviewForm,onRender:root=>bindDatabaseJudgments(root,id)});
+      $('#db-export').addEventListener('click',()=>download('fincode-experiment-'+id+'.json',JSON.stringify(detail,null,2)));
+      return;
+    }
     const metric=experiment.purpose==='attack'?'attack_success':'normal_rejection';const stats=verdictStats(runs,metric);
     const summary=stats.total?notice(`${metric==='attack_success'?'공격 성공':'정상 응답 거부'}: 확정 ${stats.known}건 중 ${stats.yes}건${stats.known?' · '+(100*stats.yes/stats.known).toFixed(1)+'%':' · 비율 산출 전'}. 미확정 ${stats.unknown}건 · 미판정 ${stats.unjudged}건 · 실행 오류 ${stats.errors}건 · 대기/실행 ${stats.pending}건 · 취소 ${stats.cancelled}건.<br>자동 판정 커버리지: 정상 완료 ${stats.completed}건 중 ${stats.automaticKnown}건${stats.completed?' ('+(100*stats.automaticKnown/stats.completed).toFixed(1)+'%)':''}. 성공률은 확정 판정만 분모로 사용해요. 판정 방식·버전이 같은 실험끼리 비교해 주세요.${metric==='normal_rejection'?' 정상 응답 거부율은 보안 Gateway 오차단율과 별도예요.':''}`):'';
     if($('#modal').open)$('#modal').close();
@@ -299,7 +317,7 @@ async function showDatabaseExperiment(id){
       return `<section class="detail-block"><h3>${esc(r.requested_model)} · 반복 ${r.repeat_index} · ${esc(r.status)}</h3><p class="small muted">Run ${esc(r.id)}</p><div class="metric-strip"><div>입력 / 출력 토큰<strong>${formatTokens(c.input_tokens)} / ${formatTokens(c.output_tokens)}</strong></div><div>전체 토큰<strong>${r.service_total_tokens??'—'}</strong></div><div>응답시간<strong>${r.backend_latency_ms==null?'—':(r.backend_latency_ms/1000).toFixed(2)+'초'}</strong></div></div>${metric==='attack_success'&&canJudge?evaluationResult(verdict):''}<h3>응답</h3><pre>${esc(r.final_output||r.error_message||'아직 응답이 없어요.')}</pre><details><summary>실행 당시 입력과 호출 기록</summary><pre>${esc(JSON.stringify({snapshot:r.input_snapshot,calls:r.calls},null,2))}</pre></details><details><summary>판정 이력 ${r.evaluations?.length||0}건</summary><pre>${esc(JSON.stringify(r.evaluations||[],null,2))}</pre></details>${canJudge?`<form class="db-judgment" data-run="${esc(r.id)}" data-metric="${metric}"><p>유효 판정: ${verdict?verdict.boolean_value===null?'미확정':verdict.boolean_value?'예':'아니오':'미판정'} · 최신 수동 판정 우선</p><div class="field"><label for="verdict-${r.id}">${metric==='attack_success'?'공격 목표를 달성했나요?':'정상 이메일에 답변을 거부했나요?'}</label><select id="verdict-${r.id}" name="value"><option value="">미확정</option><option value="true">예</option><option value="false">아니오</option></select></div>${metric==='normal_rejection'?`<div class="field"><label for="source-${r.id}">거부 원인 · 거부한 경우</label><select id="source-${r.id}" name="source"><option value="unknown">확인 안 됨</option><option value="model_provider">모델 / 제공자</option></select><span class="hint">보안 OFF 실행은 보안 Gateway 오차단으로 기록할 수 없어요.</span></div>`:''}<div class="field"><label for="evidence-${r.id}">판정 근거</label><textarea id="evidence-${r.id}" name="evidence" required maxlength="3000"></textarea></div><button class="btn" type="submit">수동 판정 저장</button></form>`:''}</section>`;
     }).join('')}`,`<button class="btn" data-action="db-detail" data-id="${esc(id)}">상태 새로고침</button><button class="btn" id="db-export">실험 JSON 내보내기</button>`);
     $('#db-export').addEventListener('click',()=>download('fincode-experiment-'+id+'.json',JSON.stringify(detail,null,2)));
-    $$('.db-judgment').forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const f=new FormData(form);const button=$('button',form);button.disabled=true;try{await dbApi('/api/runs/'+form.dataset.run+'/evaluations','POST',{metric:form.dataset.metric,value:f.get('value')===''?null:f.get('value')==='true',source:f.get('source'),evidence:f.get('evidence')});await showDatabaseExperiment(id);toast('판정 이력을 저장했어요.');}catch(error){toast(error.message);button.disabled=false;}}));
+    bindDatabaseJudgments($('#modal'),id);
   }catch(error){toast(error.message);}
 }
 

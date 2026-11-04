@@ -4,6 +4,7 @@
 <header><a class="brand" href="./"><span class="brandmark">F</span><span>핀코드 <small>LLM SECURITY LAB</small></span></a><span class="branch">attacktest · 테스트 화면</span><a class="button secondary" href="dashboard.html#data">데이터 관리 화면 열기 ↗</a></header>
 <main><div class="intro"><span class="eyebrow">ATTACK EVALUATION / PREVIEW</span><h1>공격 성공 판정, 직접 확인하기</h1><p>응답을 선택하거나 붙여 넣고, 어떤 근거로 성공·실패·미확정이 나오는지 확인하세요.</p></div>
 <div class="notice"><strong>운영 환경과 분리된 테스트예요.</strong> 입력한 응답을 브라우저에서 검사하며 모델 API는 호출하지 않아요. 저장한 시나리오는 이 브라우저에만 보관돼요.</div>
+<section class="saved panel" style="margin:0 0 24px"><div><h2>카테고리별 공격 실험 결과</h2><p>성공·실패 집계, 상태 필터, 프롬프트와 응답을 한 화면에서 확인해 보세요.</p></div><a class="button primary" href="results.html">공격 결과 화면 열기 →</a></section>
 <div class="layout"><form id="test-form" class="panel">
 <div class="panel-title"><span class="step">01</span><div><h2>판정 조건과 응답</h2><p>원문 유출 예시로 시작해 보세요.</p></div></div>
 <div class="fields"><div class="row"><label>시나리오 이름<input id="scenario-name" required maxlength="200" value="시스템 프롬프트 원문 유출 테스트"></label><label>판정 방식<select id="mode"><option value="system_prompt_leak">시스템 프롬프트 원문 유출</option><option value="exact">전체 응답 일치</option><option value="manual">수동 판정</option></select></label></div>

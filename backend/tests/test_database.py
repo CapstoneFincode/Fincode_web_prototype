@@ -60,6 +60,34 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code,200,response.text)
         return response.json()
 
+    async def test_attack_report_metadata_survives_scenario_revision_and_legacy_snapshots(self):
+        eid=await self.start(repeat=2)
+        before=(await self.detail(eid))['runs'][0]
+        frozen=before['input_snapshot']['attackScenario']
+        self.assertEqual(frozen['name'],ATTACK['name'])
+        self.assertEqual(frozen['id'],self.attack['dbId'])
+        self.assertEqual(frozen['revision'],1)
+        self.assertTrue(frozen['categoryName'])
+        response=await self.client.put('/api/data/attacks/'+self.attack['id'],json={**self.attack,'name':'실험 후 수정된 이름'})
+        self.assertEqual(response.status_code,200,response.text)
+        await self.app.state.worker_once()
+        detail=await self.detail(eid)
+        self.assertEqual(len(detail['runs']),2)
+        completed=detail['runs'][0]
+        self.assertEqual(completed['input_snapshot']['attackScenario'],frozen)
+        self.assertEqual(completed['attack_scenario_name'],ATTACK['name'])
+        self.assertEqual(completed['attack_scenario_revision'],1)
+        self.assertEqual(completed['calls'][0]['request_snapshot']['messages'],self.calls[0]['messages'])
+        self.assertEqual(completed['case_number'],1)
+        self.assertEqual(detail['runs'][1]['status'],'queued')
+        with self.db.connect() as conn:
+            conn.execute("UPDATE experiment_cases SET input_snapshot=input_snapshot-'attackScenario' WHERE experiment_id=%s",(eid,))
+        legacy=(await self.detail(eid))['runs'][0]
+        self.assertNotIn('attackScenario',legacy['input_snapshot'])
+        self.assertEqual(legacy['attack_scenario_id'],self.attack['dbId'])
+        self.assertEqual(legacy['attack_scenario_name'],ATTACK['name'])
+        self.assertEqual(legacy['attack_category_name'],frozen['categoryName'])
+
     async def test_empty_reference_and_versioned_crud_preserve_past_input(self):
         self.assertEqual(self.email['reference'],'')
         self.assertEqual(self.email['reviewStatus'],'reviewed')

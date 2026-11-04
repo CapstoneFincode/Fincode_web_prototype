@@ -246,6 +246,7 @@ class Database:
             execution_plan={'repeat':data.get('repeat',1),'concurrency':1,'automaticRetries':0},
             environment_snapshot={'runtime':'python-fastapi','promptVersion':config['version']},created_by=self.actor,
             submission_key=key,submission_sha256=fingerprint,started_at=now))
+        category_names={r['id']:r['name'] for r in conn.execute('SELECT id,name FROM attack_categories').fetchall()} if any(scenario for _,scenario,_ in inputs) else {}
         first_run=None
         for number,(email,scenario,label) in enumerate(inputs,1):
             for repeat in range(1,data.get('repeat',1)+1):
@@ -258,7 +259,10 @@ class Database:
                         messages[1]['content']+='\n\n'+scenario['payload']
                 snapshot={'email':{'subject':subject,'body':body},'messages':messages,'injectionStrategy':'separate-user-message' if scenario and scenario['vector']=='direct' else 'append-email-body' if scenario else 'none',
                     'successCriterion':scenario['success_criterion'] if scenario else None,
-                    'attackCategoryId':scenario['category_id'] if scenario else None}
+                    'attackCategoryId':scenario['category_id'] if scenario else None,
+                    'attackScenario':dict(id=str(scenario['id']),key=scenario['scenario_key'],revision=scenario['revision'],
+                        name=scenario['name'],vector=scenario['vector'],channel=scenario['channel'],payload=scenario['payload'],
+                        categoryId=scenario['category_id'],categoryName=category_names.get(scenario['category_id'],'미분류')) if scenario else None}
                 cid,rid=str(uuid4()),str(uuid4())
                 first_run=first_run or rid
                 insert(conn,'experiment_cases',dict(id=cid,experiment_id=eid,case_number=number,repeat_index=repeat,expected_label=label,
@@ -384,9 +388,13 @@ class Database:
             e=conn.execute('SELECT * FROM experiments WHERE id=%s',(uuid(eid),)).fetchone()
             if not e:
                 raise DataError('실험을 찾을 수 없습니다.',404)
-            rows=conn.execute('''SELECT r.*, c.expected_label,c.requested_model,c.repeat_index,c.input_snapshot,m.service_total_tokens,
+            rows=conn.execute('''SELECT r.*, c.expected_label,c.requested_model,c.repeat_index,c.case_number,c.input_snapshot,m.service_total_tokens,
+                c.attack_scenario_id,s.scenario_key AS attack_scenario_key,s.revision AS attack_scenario_revision,
+                s.name AS attack_scenario_name,s.vector AS attack_vector,s.channel AS attack_channel,
+                s.category_id AS attack_category_id,ac.name AS attack_category_name,
                 (SELECT jsonb_agg(to_jsonb(v) ORDER BY v.created_at) FROM evaluations v WHERE v.run_id=r.id) AS evaluations
                 FROM runs r JOIN experiment_cases c ON c.id=r.experiment_case_id JOIN run_metrics m ON m.run_id=r.id
+                LEFT JOIN attack_scenarios s ON s.id=c.attack_scenario_id LEFT JOIN attack_categories ac ON ac.id=s.category_id
                 WHERE c.experiment_id=%s ORDER BY c.case_number,c.repeat_index''',(e['id'],)).fetchall()
             for row in rows:
                 row['calls']=conn.execute('SELECT * FROM llm_calls WHERE run_id=%s ORDER BY call_number',(row['id'],)).fetchall()
