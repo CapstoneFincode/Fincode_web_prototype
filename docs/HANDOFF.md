@@ -1,4 +1,17 @@
-# 최신 상태: main 병합·운영 반영 완료 — 2026-11-04
+# 최신 작업: attacktest 공격 성공 판정 — 2026-11-04
+
+- 사용자 지시에 따라 이번 기능은 `attacktest`에서 개발한다. 아래 이전 기록의 main 개발 지침보다 이 항목을 우선한다.
+- 등록/수정 API와 UI에 `evaluationMode`를 추가했다. 기존 exact/manual은 보존하며 시스템 프롬프트 원문 유출 방식을 선택할 수 있다.
+- `backend/evaluation.py`가 실행 당시 시스템 지침과 응답을 비교한다. 전체 원문 일치는 성공, 일부 일치/입력에 원문 포함은 미확정이며 거부·가짜 지침만으로 성공 처리하지 않는다.
+- 기존 JSONB/판정 이력 구조를 사용하고 migration/운영 데이터 변경은 없다. 판정 LLM이나 외부 공격 데이터도 사용하지 않는다.
+- 상세 결과에 근거/일치 구간/판정기 버전과 미확정/오류/자동 판정 커버리지를 표시한다. 수동 판정 우선순위는 보존한다.
+- 검증: JS 75/75, Python 65/65(격리 PGlite + psycopg, 모의 모델), 구문/diff 및 빌드 통과. 브라우저 preview는 연결 오류로 미검증이다.
+- 이번 작업은 cobas67 계정으로 attacktest에만 저장한다. main 병합, Railway/Sites 배포, 실모델 호출은 수행하지 않았다.
+- 자세한 범위/호환성/적용 방법: [ATTACK-EVALUATION.md](ATTACK-EVALUATION.md).
+
+---
+
+# 이전 상태: main 병합·운영 반영 완료 — 2026-11-04
 
 - 이후 개발과 문제 수정은 **main**에서 진행한다. 이전 절의 UI/main 병합 보류는 해제되었다.
 - GitHub PR #2: https://github.com/CapstoneFincode/Fincode_web_prototype/pull/2. 기능 통합 커밋 `a75bc6051ba70c6829aae2f06a91683ee25d8db8`; UI 마지막 기능 커밋 `f104a49b5409da0744bbc43ffdf9b6c35c7885ac`.
