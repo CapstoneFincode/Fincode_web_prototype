@@ -4,7 +4,11 @@
 - 공격 요청에는 emailId가 필요 없으며 구형 클라이언트가 보내도 무시한다. 정상 이메일 실험은 이메일 선택과 반복 횟수를 유지한다. 직접/간접은 분류로 유지하되 두 분류 모두 공격문 자체를 user 메시지로 전송하므로 이전 이메일 삽입 실험과 입력 조건이 다르다.
 - 새 실행은 email_case_id=NULL, input_snapshot.email=null, inputMode=scenario-only-v1로 저장한다. 실행 결과에 입력 방식을 표시하며, 기존 기록과 이미 등록된 작업의 입력 스냅샷은 보존한다. DB migration이나 과거 재판정은 없다.
 - 검증: JavaScript 93/93, Python 74/74(격리 PGlite DB·모의 모델), 서버/브라우저 판정 전체 객체 166/166 통과. 정상 이메일 미선택/구형 emailId 무시, 원문과 비가시 문자 보존, 정상 실험 반복, 기존 대기 작업 호환성을 확인했다. 실제 유료 모델은 호출하지 않았다.
-- 배포 식별자와 운영 데이터 보존 대조 결과는 배포 후 별도 문서 커밋에 기록한다.
+- 기능 커밋 `543c3b6b22cb3bcf38de38ba6f0501eb85813d1c`를 main에 저장하고 Railway fincode-api/production에 배포했다. 배포 `c3087990-2a10-433b-b286-73e0a6624934` SUCCESS, 해당 커밋 고정 및 staged 변경 없음. API readiness·PostgreSQL 연결·attackInputMode=scenario-only-v1을 확인했다.
+- 기존 운영 웹에 Sites 소스 `5284b00aae7ff51aaac80372a8c5a433a2fba7d2`를 배포했다. 배포 `appgdep_6af14a9b35dc81918ef1e7bcde209fa0` succeeded, 저장 버전 `appgprj_6acc6daad91c8191931bddebb0cc597a~appgver_87ad2b7737c48191adc38b69a82ed90b`. 기존 소유자 전용 접근·환경 revision 2 유지. GitHub 기능 커밋과 Sites의 추적 파일 111개가 일치하며 운영용 빌드 통과.
+- 운영 읽기 전용 대조: 정상 이메일 5건·공격 시나리오 11건, 기존 실험 30개·실행 53개의 모든 기존 필드 보존. 배포 직전 대기/실행 중 작업 0건. 새 메타데이터만 추가를 허용한 API 스냅샷 비교이며 물리 DB 백업은 아니다.
+- 운영 HTTP의 app.js/categories.js/data.js/style.css/attack-results.js/attack-results.css/index.html 7개 파일을 배포 소스와 바이트 단위로 대조했다. 비밀·원문 데이터가 없는 확인 결과는 `docs/verification/2026-11-09-scenario-only-release.json`에 기록했다.
+- 로컬 브라우저에서 공격 이메일 선택창 숨김, 정상 실험 전환 시 이메일·반복 필드 복원, 공격으로 돌아와 선택된 4개 시나리오의 예시 결과 표시까지 확인했다. 실제 모델 호출/운영 쓰기 없이 검증했다. 이 배포 기록을 추가하는 후속 문서 커밋은 재배포하지 않는다.
 
 ---
 
