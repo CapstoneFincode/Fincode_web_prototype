@@ -14,3 +14,9 @@ backend/tests/
 
 !database/
 !database/**
+
+!datasets/
+!datasets/ground_truth_set/
+!datasets/ground_truth_set/v1/
+!datasets/ground_truth_set/v1/emails.json
+!datasets/ground_truth_set/v1/manifest.json
