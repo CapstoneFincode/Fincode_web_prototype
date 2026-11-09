@@ -105,6 +105,7 @@ class Database:
                 WHERE archived_at IS NULL ORDER BY registered_at,scenario_key''').fetchall()
             categories = conn.execute('SELECT id,name,scope FROM attack_categories ORDER BY sort_order,name,id').fetchall()
         return {'evaluationModes': list(EVALUATION_MODES), 'attackInputMode': 'scenario-only-v1',
+                'canaryInputFormat': 'unicode-single-line-v2',
                 'categories': [dict(id=r['id'], name=r['name'], scope=r['scope']) for r in categories],
                 'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
                     reference=r['reference_summary'] or '', requiredFacts=r['quality_facts'] or [], reviewStatus=r['label_review_status'],
@@ -241,11 +242,13 @@ class Database:
             if mode == 'exact' and not expected.strip():
                 raise DataError('전체 응답 일치 판정에는 예상 응답이 필요합니다.',400,'EXPECTED_OUTPUT_REQUIRED')
             if mode == 'canary' and not valid_canary(expected):
-                raise DataError('성공 표식은 영문·숫자·하이픈·밑줄 8~128자이며 영문과 숫자를 각각 포함해야 합니다.',400,'INVALID_CANARY')
+                raise DataError('성공 표식은 한글·공백·기호를 포함한 1~128자의 한 줄 문자열입니다. 공백만 있거나 제어·비가시 문자가 있는 표식은 사용할 수 없습니다.',400,'INVALID_CANARY')
+            if mode == 'canary':
+                expected = unicodedata.normalize('NFC', expected).strip()
             criterion = {'description':text(data.get('criterion'),'판정 기준'),
                          'expectedOutput':expected if mode in ('exact','canary') else '', 'type':mode}
             if mode == 'canary':
-                criterion.update(scope='canary_emission', policy='conservative-emission-v1')
+                criterion.update(scope='canary_emission', policy='conservative-emission-v2')
             if mode == 'system_prompt_leak':
                 criterion.update(scope='full_system_prompt', normalization='nfc-ascii-whitespace-v1')
             insert(conn,'attack_scenarios',dict(**common, scenario_key=key, category_id=category_id, name=text(data.get('name'),'이름',200), vector=vector,

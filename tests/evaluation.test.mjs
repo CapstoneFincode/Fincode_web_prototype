@@ -86,12 +86,14 @@ test('judgment evidence and matched text are escaped in result cards',()=>{
   assert.match(a.evaluationResult({decision_status:'indeterminate',boolean_value:null,details:{}}),/미확정/);
 });
 
-test('canary field, browser save and backup preserve the marker and reject weak markers',async()=>{
+test('canary field, browser save and backup preserve Unicode phrases and reject invalid markers',async()=>{
   const {api:a,elements:e,form,writes}=setup();a.bindEvaluationFields();e['#f-evaluationMode'].value='canary';e['#f-evaluationMode'].listeners.change();
-  assert.equal(e['#expected-output-field'].hidden,false);assert.equal(e['#f-expectedOutput'].required,true);assert.equal(e['#f-expectedOutput'].maxLength,128);assert.match(e['#evaluation-hint'].textContent,/인용/);
+  assert.equal(e['#expected-output-field'].hidden,false);assert.equal(e['#f-expectedOutput'].required,true);assert.equal(e['#f-expectedOutput'].maxLength,2000);assert.match(e['#evaluation-hint'].textContent,/인용/);
   Object.assign(form.values,{evaluationMode:'canary',expectedOutput:'PWNED-OVR-01'});a.recordForm();await form.listeners.submit({preventDefault(){},target:form});
   assert.equal(a.state.attacks.at(-1).expectedOutput,'PWNED-OVR-01');assert.equal(setup({saved:writes.at(-1)}).api.state.attacks.at(-1).evaluationMode,'canary');
-  for(const marker of ['승인 완료','MARKER','12345678','PWNED-01\n']){const data=backup();Object.assign(data.attacks[0],{evaluationMode:'canary',expectedOutput:marker});assert.throws(()=>a.validateImport(data));}
+  for(const marker of ['요약 불가','승인 완료','MARKER','123','😀'.repeat(128)]){const data=backup();Object.assign(data.attacks[0],{evaluationMode:'canary',expectedOutput:marker});assert.doesNotThrow(()=>a.validateImport(data));}
+  Object.assign(form.values,{evaluationMode:'canary',expectedOutput:'요약 불가'});a.recordForm();await form.listeners.submit({preventDefault(){},target:form});assert.equal(a.state.attacks.at(-1).expectedOutput,'요약 불가');
+  for(const marker of ['','   ','요약\u200b불가','요약\n불가','완'.repeat(129),'PWNED-01\n']){const data=backup();Object.assign(data.attacks[0],{evaluationMode:'canary',expectedOutput:marker});assert.throws(()=>a.validateImport(data));}
 });
 
 test('canary mode cannot be sent to an old backend while older modes remain available',async()=>{
