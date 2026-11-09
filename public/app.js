@@ -55,7 +55,7 @@ Object.assign(state,{categories:saved?.categories||structuredClone(categorySeeds
 const localData={normal:state.normal,attacks:state.attacks,categories:state.categories};
 Object.assign(state,{dbChecked:false,dbConfigured:false,dbReady:false,dbError:"",jobs:[],jobSubmitting:false});
 Object.assign(state,{liveModel:'',models:[],connection:'idle',connectionError:'',configured:false,running:false,emailError:null,lastLiveResult:null});
-Object.assign(state,{evaluationMenuOpen:false,comparisonDraft:{modelA:'',modelB:'',defense:'off'}});
+Object.assign(state,{evaluationMenuOpen:false,comparisonDraft:{models:['',''],defense:'off'},singleEvaluationDraft:{model:'',defense:'off'}});
 let activeRequest=null;
 let connectionRequest=null;
 let requestSequence=0;
@@ -76,11 +76,12 @@ function modal(title,body,actions='',className=''){const d=$('#modal');d.classNa
 function download(name,content,type='application/json'){const b=new Blob([content],{type});const url=URL.createObjectURL(b);const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
 function exportData(){download('fincode-data.json',JSON.stringify({schemaVersion:1,exportedAt:new Date().toISOString(),normal:state.normal,attacks:state.attacks,categories:state.categories,plans:state.plans,notes:state.notes},null,2));toast('이 브라우저의 데이터를 JSON으로 내보냈어요.');}
 function exportCSV(){const rows=filteredResults();const headers=['date','model','attack_types','attempts','successes','asr_percent','source','review_note'];const line=r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',');download('fincode-historical-results.csv','\ufeff'+[line(headers),...rows.map(r=>line([r.date,r.model,r.types,r.attempts,r.successes,r.asr,r.source,r.reviewNote]))].join('\r\n'),'text/csv;charset=utf-8');}
-const navs=[['overview','grid','대시보드'],['evaluation','layers','모델 별 성능 평가'],['experiments','flask','공격 실험'],['data','database','데이터 관리'],['results','chart','실험 결과']];
-const routeTitles={overview:'대시보드',email:'이메일 요약기',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 결과',settings:'연동 및 개발 현황'};
+const navs=[['overview','grid','대시보드'],['evaluation','layers','성능 평가'],['experiments','flask','공격 실험'],['data','database','데이터 관리'],['results','chart','실험 결과']];
+const evaluationRoutes=['email','single-evaluation','comparison'];
+const routeTitles={overview:'대시보드',email:'이메일 요약기','single-evaluation':'단일 모델 성능 평가',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 결과',settings:'연동 및 개발 현황'};
 function evaluationNavigation(){
-  const active=['email','comparison'].includes(state.route),open=state.evaluationMenuOpen;
-  return `<div class="evaluation-nav"><button type="button" id="evaluation-menu-toggle" class="nav-parent ${active?'active':''}" data-action="toggle-evaluation-menu" aria-expanded="${open}" aria-controls="evaluation-subnav">${icon('layers')}<span>모델 별 성능 평가</span>${icon('chevron','nav-chevron')}</button><div id="evaluation-subnav" class="evaluation-subnav" ${open?'':'hidden'}>${[['email','이메일 요약기'],['comparison','모델 별 비교']].map(([id,label])=>`<a href="#${id}" class="${state.route===id?'active':''}" ${state.route===id?'aria-current="page"':''}><span class="subnav-dot" aria-hidden="true"></span>${label}</a>`).join('')}</div></div>`;
+  const active=evaluationRoutes.includes(state.route),open=state.evaluationMenuOpen;
+  return `<div class="evaluation-nav"><button type="button" id="evaluation-menu-toggle" class="nav-parent ${active?'active':''}" data-action="toggle-evaluation-menu" aria-expanded="${open}" aria-controls="evaluation-subnav">${icon('layers')}<span>성능 평가</span>${icon('chevron','nav-chevron')}</button><div id="evaluation-subnav" class="evaluation-subnav" ${open?'':'hidden'}>${[['email','이메일 요약기'],['single-evaluation','단일 모델 성능 평가'],['comparison','모델 별 비교']].map(([id,label])=>`<a href="#${id}" class="${state.route===id?'active':''}" ${state.route===id?'aria-current="page"':''}><span class="subnav-dot" aria-hidden="true"></span>${label}</a>`).join('')}</div></div>`;
 }
 function toggleEvaluationMenu(){
   state.evaluationMenuOpen=!state.evaluationMenuOpen;
@@ -117,36 +118,91 @@ function emailPage(){return head('EMAIL SUMMARIZER','이메일 요약기','이�
  `<div class="two-col"><section class="panel"><div class="panel-head"><h2>이메일 입력</h2>${tag('본문 요약 · 실제 API','blue')}</div><div class="body-pad" style="padding-top:5px"><fieldset class="email-controls" ${state.running?'disabled':''}><div class="field-row"><div class="field"><label for="live-model">실제 호출 모델</label><select id="live-model" ${state.connection!=='ready'?'disabled':''}>${liveModelOptions()}</select><div class="hint">BAZE에서 조회한 모델 · 과거 실험 표기와 별도</div></div><div class="field"><label for="sample">정상 이메일 예시</label><div style="display:flex;gap:6px"><select id="sample">${state.normal.map(n=>`<option value="${esc(n.id)}" ${state.selectedSample===n.id?'selected':''}>${esc(n.title)}</option>`).join('')}</select><button class="btn" data-action="load-sample" ${state.running?'disabled':''}>불러오기</button></div><div class="hint">합성 예시 또는 직접 등록한 기준 데이터</div></div></div><div class="field"><label for="email-title">제목</label><input id="email-title" maxlength="200" placeholder="이메일 제목을 입력하세요" value="${esc(state.emailTitle)}"></div><div class="field"><div class="wide-label"><label class="field-label" for="email-body">이메일 본문</label><span id="char-count" class="muted small">${state.email.length.toLocaleString()}자</span></div><textarea class="email-text" id="email-body" maxlength="30000" placeholder="요약할 이메일을 붙여넣거나, 위에서 정상 이메일 예시를 불러오세요.">${esc(state.email)}</textarea></div><div class="field"><span class="field-label">첨부파일 · 추출 기능 준비 중</span><label class="upload" id="dropzone" tabindex="${state.running?'-1':'0'}" role="button" aria-disabled="${state.running}" aria-label="첨부파일 선택">${icon('upload')}<strong>파일을 놓거나 클릭하여 선택하세요</strong><small>PDF · PPT(X) · DOC(X) · HWP(X) · PNG · JPEG / 파일당 10MB</small><input id="files" type="file" multiple accept=".pdf,.ppt,.pptx,.doc,.docx,.hwp,.hwpx,.png,.jpg,.jpeg"></label><div class="hint">현재는 파일명만 표시해요. 첨부파일이 있으면 실제 요약을 실행할 수 없어요.</div><div class="file-list">${fileList()}</div></div><div class="actions email-submit"><button class="btn" data-action="clear-email" ${state.running?'disabled':''}>입력 초기화</button><button class="btn" data-action="demo-summary" ${state.running?'disabled':''}>기준 요약 보기</button><button class="btn primary" id="summarize-button" data-action="live-summary" ${canSummarize()?'':'disabled'}>${icon('mail')}${state.running?'요약 생성 중…':'실제 요약 실행'}</button></div></fieldset>${state.files.length?'<p class="local-note">본문만 요약하려면 첨부파일을 모두 제거해 주세요.</p>':''}<p class="local-note">실행 결과는 이 탭에서만 보관해요. 기록을 남기려면 결과 JSON을 내려받아 주세요.</p></div></section>
  <section class="panel" id="summary-panel" aria-live="polite" aria-busy="${state.running}">${summaryPanel()}</section></div>`;}
 const comparisonDefenses=[
-  {id:'off',name:'방어 미적용',description:'방어 없이 모델 간 차이를 비교할 조건이에요.'},
+  {id:'off',name:'방어 미적용',description:'방어 없이 기준 성능을 측정할 조건이에요.'},
   {id:'filter',name:'입력 탐지',description:'입력 탐지를 적용했을 때의 변화 · 구현 예정'},
   {id:'separate',name:'명령·데이터 분리',description:'지시와 이메일을 분리했을 때의 변화 · 구현 예정'},
   {id:'both',name:'두 기법 조합',description:'입력 탐지와 명령·데이터 분리 동시 적용 · 구현 예정'},
 ];
-function comparisonModelOptions(selected){return '<option value="">비교할 모델을 선택하세요</option>'+state.models.map(m=>`<option value="${esc(m.id)}" ${selected===m.id?'selected':''}>${esc(m.id)}</option>`).join('');}
+function comparisonModelOptions(selected){return '<option value="">모델을 선택하세요</option>'+state.models.map(m=>`<option value="${esc(m.id)}" ${selected===m.id?'selected':''}>${esc(m.id)}</option>`).join('');}
+function evaluationModelLabel(id){return state.models.some(m=>m.id===id)?id:'선택 전';}
+function comparisonModelFields(){
+  const models=state.comparisonDraft.models;
+  return `<div class="comparison-model-list">${models.map((model,index)=>`<div class="field comparison-model-slot"><div class="comparison-model-heading"><label for="comparison-model-${index}">모델 ${index+1}</label>${index>=2?`<button type="button" class="btn text comparison-remove-model" data-action="comparison-remove-model" data-index="${index}" aria-label="모델 ${index+1} 삭제">삭제</button>`:'<span class="comparison-required">기본 모델</span>'}</div><select id="comparison-model-${index}" data-comparison-index="${index}" ${state.connection==='ready'?'':'disabled'}>${comparisonModelOptions(model)}</select></div>`).join('')}</div><div class="comparison-model-toolbar"><button type="button" id="comparison-add-model" class="btn" data-action="comparison-add-model" ${models.length>=5?'disabled':''}>+ 모델 추가</button><span role="status">${models.length} / 5개 · 기본 2개, 최대 5개</span></div>`;
+}
 function comparisonSummary(){
   const draft=state.comparisonDraft,defense=comparisonDefenses.find(d=>d.id===draft.defense)||comparisonDefenses[0];
-  const modelLabel=id=>state.models.some(m=>m.id===id)?id:'선택 전';
-  return `<div class="panel-head"><h2>비교 조건</h2>${tag('설정 초안','amber')}</div><div class="panel-body"><dl class="comparison-details"><div><dt>모델 A</dt><dd>${esc(modelLabel(draft.modelA))}</dd></div><div><dt>모델 B</dt><dd>${esc(modelLabel(draft.modelB))}</dd></div><div><dt>기준 조건</dt><dd>방어 미적용 · OFF</dd></div><div><dt>추가 비교 조건</dt><dd>${draft.defense==='off'?'없음 · 모델 간 비교':esc(defense.name)+' · 구현 예정'}</dd></div></dl><p class="comparison-hint">같은 모델을 선택하면 방어 적용 전후를 비교하는 조건으로 준비할 수 있어요.</p><button type="button" id="comparison-run" class="btn primary comparison-run" disabled>비교 실행 · 준비 중</button><p class="comparison-hint">현재는 설정만 가능해요. 자동 채점과 비교 실행은 추후 제공돼요.</p></div>`;
+  return `<div class="panel-head"><h2>비교 조건</h2>${tag('설정 초안','amber')}</div><div class="panel-body"><dl class="comparison-details">${draft.models.map((model,index)=>`<div><dt>모델 ${index+1}</dt><dd>${esc(evaluationModelLabel(model))}</dd></div>`).join('')}<div><dt>기준 조건</dt><dd>방어 미적용 · OFF</dd></div><div><dt>추가 비교 조건</dt><dd>${draft.defense==='off'?'없음 · 모델 간 비교':esc(defense.name)+' · 구현 예정'}</dd></div></dl><p class="comparison-hint">동일한 정상 이메일로 선택한 모델을 비교할 조건이에요. 한 모델의 방어 전후 조건은 <a href="#single-evaluation">단일 모델 성능 평가</a>에서도 준비할 수 있어요.</p><button type="button" id="comparison-run" class="btn primary comparison-run" disabled>비교 실행 · 준비 중</button><p class="comparison-hint">현재는 설정만 가능해요. 자동 채점과 비교 실행은 추후 제공돼요.</p></div>`;
+}
+function refreshComparisonSummary(){const panel=$('#comparison-summary');if(panel)panel.innerHTML=comparisonSummary();}
+function bindComparisonModelControls(){
+  $$('[data-comparison-index]').forEach(el=>el.addEventListener('change',e=>updateComparisonDraft(Number(el.dataset.comparisonIndex),e.target.value)));
+}
+function refreshComparisonModels(focusIndex){
+  const fields=$('#comparison-model-fields');
+  if(fields){
+    fields.innerHTML=comparisonModelFields();
+    bindComparisonModelControls();
+    const select=$('#comparison-model-'+focusIndex);
+    const focusTarget=select&&!select.disabled?select:$('[data-action="comparison-remove-model"][data-index="'+focusIndex+'"]')||$('#comparison-add-model');
+    focusTarget?.focus?.();
+  }
+  refreshComparisonSummary();
 }
 function updateComparisonDraft(field,value){
   if(field==='defense'){
     if(!comparisonDefenses.some(d=>d.id===value))return;
-  }else if(['modelA','modelB'].includes(field)){
+    state.comparisonDraft.defense=value;
+  }else{
+    if(!Number.isInteger(field)||field<0||field>=state.comparisonDraft.models.length)return;
+    if(value!==''&&!state.models.some(m=>m.id===value))return;
+    state.comparisonDraft.models[field]=value;
+  }
+  refreshComparisonSummary();
+}
+function addComparisonModel(){
+  if(state.comparisonDraft.models.length>=5)return;
+  state.comparisonDraft.models.push('');
+  refreshComparisonModels(state.comparisonDraft.models.length-1);
+}
+function removeComparisonModel(index){
+  if(!Number.isInteger(index)||index<2||index>=state.comparisonDraft.models.length)return;
+  state.comparisonDraft.models.splice(index,1);
+  refreshComparisonModels(Math.min(index,state.comparisonDraft.models.length-1));
+}
+function singleEvaluationSummary(){
+  const draft=state.singleEvaluationDraft,defense=comparisonDefenses.find(d=>d.id===draft.defense)||comparisonDefenses[0];
+  return `<div class="panel-head"><h2>평가 조건</h2>${tag('설정 초안','amber')}</div><div class="panel-body"><dl class="comparison-details"><div><dt>평가 모델</dt><dd>${esc(evaluationModelLabel(draft.model))}</dd></div><div><dt>기준 조건</dt><dd>방어 미적용 · OFF</dd></div><div><dt>추가 평가 조건</dt><dd>${draft.defense==='off'?'없음 · 방어 미적용':esc(defense.name)+' · 구현 예정'}</dd></div></dl><p class="comparison-hint">선택한 한 모델에 같은 정상 이메일을 적용해 요약 품질과 방어 전후의 변화를 평가할 조건이에요.</p><button type="button" id="single-evaluation-run" class="btn primary comparison-run" disabled>평가 실행 · 준비 중</button><p class="comparison-hint">현재는 설정만 가능해요. 자동 채점과 평가 실행은 추후 제공돼요.</p></div>`;
+}
+function updateSingleEvaluationDraft(field,value){
+  if(field==='defense'){
+    if(!comparisonDefenses.some(d=>d.id===value))return;
+  }else if(field==='model'){
     if(value!==''&&!state.models.some(m=>m.id===value))return;
   }else return;
-  state.comparisonDraft[field]=value;
-  const panel=$('#comparison-summary');if(panel)panel.innerHTML=comparisonSummary();
+  state.singleEvaluationDraft[field]=value;
+  const panel=$('#single-evaluation-summary');if(panel)panel.innerHTML=singleEvaluationSummary();
 }
-function comparisonPage(){
+function evaluationDefensePanel(name,selected,single=false){
+  return `<section class="panel"><div class="panel-head"><div><h2>방어 적용 설정</h2><p>방어 미적용을 기준으로 성능 변화와 정상 이메일 오차단을 비교해요.</p></div>${tag('방어 구현 예정','amber')}</div><div class="panel-body"><div class="comparison-baseline">${icon('shield')}<div><strong>기준 조건 · 방어 OFF</strong><span>모든 ${single?'평가':'비교'}에 방어 미적용 조건을 포함해요.</span></div>${tag('항상 포함','blue')}</div><fieldset class="comparison-defense"><legend>추가 ${single?'평가':'비교'}할 방어 기법</legend>${comparisonDefenses.map(d=>`<label class="comparison-defense-option"><input type="radio" name="${esc(name)}" value="${d.id}" ${selected===d.id?'checked':''}><span><strong>${esc(d.name)}</strong><small>${esc(d.description)}</small></span></label>`).join('')}</fieldset><p class="comparison-hint">선택한 방어 기법은 ${single?'평가':'비교'} 조건 초안이에요. 이메일 요약기나 공격 실험의 실행 설정을 바꾸지 않아요.</p></div></section>`;
+}
+function evaluationDataPanel(){
   const samples=state.normal.filter(n=>n.provenance==='sample').length;
   const pending=state.normal.filter(n=>n.provenance!=='sample'&&n.reviewStatus!=='reviewed').length;
   const source=state.dbReady?'DB 정상 이메일':state.dbConfigured?'DB 연결 확인 필요':'브라우저 정상 이메일';
+  return `<section class="panel"><div class="panel-head"><h2>정상 이메일 데이터</h2>${tag(state.dbReady?'DB 연결':'연결 상태 확인',state.dbReady?'green':'amber')}</div><div class="panel-body"><div class="comparison-data-count"><strong>${state.normal.length}</strong><span>건 · ${source}</span></div><dl class="comparison-details"><div><dt>정상 라벨 검토 완료</dt><dd>${gtCount()}건</dd></div><div><dt>검토 대기</dt><dd>${pending}건</dd></div><div><dt>기존 합성 예시</dt><dd>${samples}건</dd></div></dl><p class="comparison-hint">정상 라벨 검토와 기준 요약 검수는 별개예요. 실제 평가 전 기준 정답을 확인해 주세요.</p><a class="btn text" href="#data">데이터 관리 ${icon('arrow')}</a></div></section>`;
+}
+function evaluationMetricsPanel(single=false){
+  return `<section class="panel section-space"><div class="panel-head"><div><h2>${single?'평가':'비교'}할 항목</h2><p>같은 정상 이메일과 조건으로 측정할 항목이에요.</p></div>${tag('결과 없음')}</div><div class="comparison-metrics">${[['요약 품질','기준 요약·핵심 정보 보존'],['정상 이메일 오차단','방어로 차단된 정상 입력'],['응답시간','방어 전후 처리 시간 변화'],['토큰 사용량','입력·출력·전체 토큰 변화']].map(([name,description])=>`<div><strong>${name}</strong><span>${description}</span><small>측정 기능 준비 중</small></div>`).join('')}</div></section>`;
+}
+function comparisonPage(){
   return head('MODEL COMPARISON','모델 별 비교','같은 정상 이메일로 모델 차이와 방어 적용에 따른 성능 변화를 비교할 조건을 준비하세요.')+
     connectionPanel()+notice('<strong>비교 설정 준비 단계</strong>예요. 모델과 방어 기법을 선택해 둘 수 있지만, 비교 실행·자동 채점·방어 적용은 아직 제공되지 않아요.')+
-    `<div class="comparison-grid"><div class="comparison-main"><section class="panel"><div class="panel-head"><div><h2>비교 모델</h2><p>현재 제공 모델에서 비교할 두 모델을 선택하세요.</p></div>${tag('설정만 가능','blue')}</div><div class="panel-body"><div class="field-row">${[['modelA','모델 A'],['modelB','모델 B']].map(([key,label])=>`<div class="field"><label for="comparison-${key}">${label}</label><select id="comparison-${key}" data-comparison-field="${key}" ${state.connection==='ready'?'':'disabled'}>${comparisonModelOptions(state.comparisonDraft[key])}</select></div>`).join('')}</div><p class="comparison-hint">이메일 요약기의 모델 선택과 별도로 유지돼요. 페이지를 새로고침하면 비교 설정은 초기화돼요.</p></div></section>
-    <section class="panel"><div class="panel-head"><div><h2>방어 적용 설정</h2><p>방어 미적용을 기준으로 성능 변화와 정상 이메일 오차단을 비교해요.</p></div>${tag('방어 구현 예정','amber')}</div><div class="panel-body"><div class="comparison-baseline">${icon('shield')}<div><strong>기준 조건 · 방어 OFF</strong><span>모든 비교에 방어 미적용 조건을 포함해요.</span></div>${tag('항상 포함','blue')}</div><fieldset class="comparison-defense"><legend>추가 비교할 방어 기법</legend>${comparisonDefenses.map(d=>`<label class="comparison-defense-option"><input type="radio" name="comparison-defense" value="${d.id}" ${state.comparisonDraft.defense===d.id?'checked':''}><span><strong>${d.name}</strong><small>${d.description}</small></span></label>`).join('')}</fieldset><p class="comparison-hint">선택한 방어 기법은 비교 조건 초안이에요. 이메일 요약기나 공격 실험의 실행 설정을 바꾸지 않아요.</p></div></section></div>
-    <aside class="comparison-side"><section class="panel" id="comparison-summary" aria-live="polite">${comparisonSummary()}</section><section class="panel"><div class="panel-head"><h2>정상 이메일 데이터</h2>${tag(state.dbReady?'DB 연결':'연결 상태 확인',state.dbReady?'green':'amber')}</div><div class="panel-body"><div class="comparison-data-count"><strong>${state.normal.length}</strong><span>건 · ${source}</span></div><dl class="comparison-details"><div><dt>정상 라벨 검토 완료</dt><dd>${gtCount()}건</dd></div><div><dt>검토 대기</dt><dd>${pending}건</dd></div><div><dt>기존 합성 예시</dt><dd>${samples}건</dd></div></dl><p class="comparison-hint">정상 라벨 검토와 기준 요약 검수는 별개예요. 실제 평가 전 기준 정답을 확인해 주세요.</p><a class="btn text" href="#data">데이터 관리 ${icon('arrow')}</a></div></section></aside></div>
-    <section class="panel section-space"><div class="panel-head"><div><h2>비교할 항목</h2><p>동일한 이메일과 조건으로 측정한 결과를 비교할 예정이에요.</p></div>${tag('결과 없음')}</div><div class="comparison-metrics">${[['요약 품질','기준 요약·핵심 정보 보존'],['정상 이메일 오차단','방어로 차단된 정상 입력'],['응답시간','방어 전후 처리 시간 변화'],['토큰 사용량','입력·출력·전체 토큰 변화']].map(([name,description])=>`<div><strong>${name}</strong><span>${description}</span><small>측정 기능 준비 중</small></div>`).join('')}</div></section>`;
+    `<div class="comparison-grid"><div class="comparison-main"><section class="panel"><div class="panel-head"><div><h2>비교 모델</h2><p>현재 제공 모델에서 비교할 모델을 2개부터 최대 5개까지 선택하세요.</p></div>${tag('설정만 가능','blue')}</div><div class="panel-body"><div id="comparison-model-fields">${comparisonModelFields()}</div><p class="comparison-hint">단일 모델 성능 평가와 이메일 요약기의 모델 선택과 별도로 유지돼요. 페이지를 새로고침하면 비교 설정은 초기화돼요.</p></div></section>${evaluationDefensePanel('comparison-defense',state.comparisonDraft.defense)}</div><aside class="comparison-side"><section class="panel" id="comparison-summary" aria-live="polite">${comparisonSummary()}</section>${evaluationDataPanel()}</aside></div>${evaluationMetricsPanel()}`;
+}
+function singleEvaluationPage(){
+  return head('SINGLE MODEL EVALUATION','단일 모델 성능 평가','한 모델의 정상 이메일 요약 성능과 방어 적용 전후의 변화를 평가할 조건을 준비하세요.')+
+    connectionPanel()+notice('<strong>평가 설정 준비 단계</strong>예요. 모델과 방어 기법을 선택해 둘 수 있지만, 평가 실행·자동 채점·방어 적용은 아직 제공되지 않아요.')+
+    `<div class="comparison-grid"><div class="comparison-main"><section class="panel"><div class="panel-head"><div><h2>평가 모델</h2><p>현재 제공 모델에서 평가할 모델 한 개를 선택하세요.</p></div>${tag('설정만 가능','blue')}</div><div class="panel-body"><div class="field"><label for="single-evaluation-model">모델</label><select id="single-evaluation-model" data-single-evaluation-field="model" ${state.connection==='ready'?'':'disabled'}>${comparisonModelOptions(state.singleEvaluationDraft.model)}</select></div><p class="comparison-hint">모델 별 비교와 이메일 요약기의 모델 선택과 별도로 유지돼요. 페이지를 새로고침하면 평가 설정은 초기화돼요.</p></div></section>${evaluationDefensePanel('single-evaluation-defense',state.singleEvaluationDraft.defense,true)}</div><aside class="comparison-side"><section class="panel" id="single-evaluation-summary" aria-live="polite">${singleEvaluationSummary()}</section>${evaluationDataPanel()}</aside></div>${evaluationMetricsPanel(true)}`;
 }
 function formatTokens(value){return Number.isInteger(value)&&value>=0?value.toLocaleString():'—';}
 function summaryPanel(){
@@ -393,12 +449,16 @@ async function showDatabaseExperiment(id){
   }catch(error){toast(error.message);}
 }
 
-const pages={overview,email:emailPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,settings:settingsPage};
-function route(){const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(['email','comparison'].includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
+const pages={overview,email:emailPage,'single-evaluation':singleEvaluationPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,settings:settingsPage};
+function route(){const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
 function bindPage(){
   if(state.route==='comparison'){
-    $$('[data-comparison-field]').forEach(el=>el.addEventListener('change',e=>updateComparisonDraft(el.dataset.comparisonField,e.target.value)));
+    bindComparisonModelControls();
     $$('input[name="comparison-defense"]').forEach(el=>el.addEventListener('change',e=>{if(e.target.checked)updateComparisonDraft('defense',e.target.value);}));
+  }
+  if(state.route==='single-evaluation'){
+    $$('[data-single-evaluation-field]').forEach(el=>el.addEventListener('change',e=>updateSingleEvaluationDraft(el.dataset.singleEvaluationField,e.target.value)));
+    $$('input[name="single-evaluation-defense"]').forEach(el=>el.addEventListener('change',e=>{if(e.target.checked)updateSingleEvaluationDraft('defense',e.target.value);}));
   }
   if(state.dbReady&&['experiments','results'].includes(state.route))refreshJobs().catch(error=>toast(error.message));
   if(state.route==='experiments'&&(state.dbReady||workflowPreview))$('#db-model')?.addEventListener('change',e=>{if(workflowPreview)state.model=e.target.value;else state.liveModel=e.target.value;});
@@ -655,9 +715,11 @@ export function validateImport(d){
 async function importData(file){if(!file)return;if(!datasetWritable())return;if(state.dbReady)return toast('DB 모드에서는 데이터 추가로 직접 등록해 주세요. JSON 가져오기는 브라우저 모드에서만 지원해요.');if(file.size>5*1024*1024)return toast('JSON 파일은 5MB 이하로 선택해 주세요.');try{const d=validateImport(JSON.parse(await file.text()));modal('데이터 가져오기',`<p class="small muted">정상 데이터 ${d.normal.length}건, 공격 시나리오 ${d.attacks.length}건, 실험 계획 ${d.plans.length}건, 의사결정 ${d.notes.length}건을 읽었어요.</p><p class="small" style="margin-top:15px">현재 브라우저의 데이터가 이 파일의 내용으로 교체돼요. 필요한 기록은 먼저 내보내 주세요.</p>`,`<button class="btn" data-action="close-modal">취소</button><button class="btn" data-action="export-data">현재 데이터 백업</button><button class="btn primary" id="confirm-import">교체하여 가져오기</button>`);$('#confirm-import').addEventListener('click',()=>{Object.assign(state,d);Object.assign(localData,{normal:state.normal,attacks:state.attacks,categories:state.categories});state.attackIds=[];state.categoryIds=[];state.categoryCounts=Object.create(null);state.vectorIds=['direct','indirect'];state.categoryFilter='all';state.selectedSample=d.normal[0]?.id||'';state.summary=null;const ok=persist();$('#modal').close();shell();if(ok)toast('데이터를 가져왔어요.');});}catch(e){toast(e instanceof SyntaxError?'JSON 파일을 읽을 수 없어요. 파일 형식을 확인해 주세요.':e.message);}}
 const actions={
  'toggle-evaluation-menu':toggleEvaluationMenu,
+ 'comparison-add-model':addComparisonModel,
+ 'comparison-remove-model':el=>removeComparisonModel(Number(el.dataset.index)),
  'menu':()=>{const open=$('.sidebar').classList.toggle('open');$('.mobile-menu').setAttribute('aria-expanded',String(open));},
  'close-modal':()=>$('#modal').close(),
- 'guide':()=>modal('핀코드 프로토타입 안내',`<div class="detail-block"><h3>직접 사용해 보세요</h3><p>① 이메일 요약기에서 실제 모델로 본문 요약·측정값 확인\n② 데이터 관리에서 정상 원문·공격 시나리오 추가\n③ 공격 실험에서 카테고리별 시나리오 수를 정해 각 1회 실행 또는 계획 저장\n④ 실험 결과에서 기존 기록 확인·CSV 내보내기\n⑤ 모델 별 비교에서 모델과 방어 적용 조건 준비</p></div>${notice('실제 요약은 서버 키 설정 후 사용할 수 있어요. DB 연결 시 공격 실험을 실제 실행하고 결과를 저장해요. 방어·첨부파일 처리는 구현 예정이에요. 데이터 관리 상단에서 저장 위치를 확인해 주세요.')}`),
+ 'guide':()=>modal('핀코드 프로토타입 안내',`<div class="detail-block"><h3>직접 사용해 보세요</h3><p>① 이메일 요약기에서 실제 모델로 본문 요약·측정값 확인\n② 데이터 관리에서 정상 원문·공격 시나리오 추가\n③ 공격 실험에서 카테고리별 시나리오 수를 정해 각 1회 실행 또는 계획 저장\n④ 실험 결과에서 기존 기록 확인·CSV 내보내기\n⑤ 단일 모델 성능 평가에서 한 모델의 평가 조건 준비\n⑥ 모델 별 비교에서 2~5개 모델과 방어 적용 조건 준비</p></div>${notice('실제 요약은 서버 키 설정 후 사용할 수 있어요. DB 연결 시 공격 실험을 실제 실행하고 결과를 저장해요. 방어·첨부파일 처리는 구현 예정이에요. 데이터 관리 상단에서 저장 위치를 확인해 주세요.')}`),
  'chart-group':el=>{state.group=Number(el.dataset.group);shell();},
  'load-sample':()=>loadSample(),
  'clear-email':()=>{if(state.running)return;state.email='';state.emailTitle='';state.files=[];invalidateEmailResult();shell();},

@@ -58,7 +58,17 @@
 .comparison-grid .panel-head p{max-width:460px}
 .comparison-grid .field-row{margin-bottom:8px}
 .comparison-grid select{width:100%;min-width:0;text-overflow:ellipsis}
+.comparison-model-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.comparison-model-slot{min-width:0;margin:0;padding:13px;border:1px solid #e5ebf4;border-radius:9px;background:#fbfcff}
+.comparison-model-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:27px;margin-bottom:8px}
+.comparison-model-heading label{font-size:12px;font-weight:600;color:#506381}
+.comparison-required{font-size:10px;color:#91a0b5}
+.comparison-remove-model{font-size:11px;padding:3px 6px;color:#8292aa}
+.comparison-remove-model:hover{color:#b35c64;background:#fff3f4}
+.comparison-model-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:15px}
+.comparison-model-toolbar>span{font-size:10px;color:#8b9ab0}
 .comparison-hint{font-size:11px;line-height:1.8;color:#7c8ca4;margin:10px 0 0}
+.comparison-hint a{color:#4874bb;text-decoration:underline;text-underline-offset:3px}
 .comparison-baseline{display:flex;gap:12px;align-items:center;background:#f1f6ff;border:1px solid #dfe8f8;border-radius:10px;padding:14px;margin-bottom:20px;color:#486b9b}
 .comparison-baseline>div{flex:1;min-width:0}
 .comparison-baseline strong{display:block;font-size:12px}
@@ -85,4 +95,4 @@
 .comparison-metrics span,.comparison-metrics small{font-size:10px;line-height:1.7;color:#8b9ab0}
 .comparison-metrics small{margin-top:8px;color:#9da8b9}
 @media(max-width:1100px){.comparison-grid{grid-template-columns:1fr}.comparison-side{display:grid;grid-template-columns:1fr 1fr}}
-@media(max-width:650px){.comparison-side{display:flex}.comparison-defense{grid-template-columns:1fr}.comparison-metrics{grid-template-columns:1fr 1fr;gap:10px;padding:6px 16px 16px}.comparison-baseline{flex-wrap:wrap}.comparison-grid{gap:16px}.comparison-main,.comparison-side{gap:16px}}
+@media(max-width:650px){.comparison-side{display:flex}.comparison-model-list,.comparison-defense{grid-template-columns:1fr}.comparison-metrics{grid-template-columns:1fr 1fr;gap:10px;padding:6px 16px 16px}.comparison-baseline{flex-wrap:wrap}.comparison-grid{gap:16px}.comparison-main,.comparison-side{gap:16px}}
