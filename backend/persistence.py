@@ -96,6 +96,10 @@ class Persistence:
         async def datasets():
             return await self.call('datasets')
 
+        @app.post('/api/data/normal/review')
+        async def review_normal_batch(request:Request):
+            return await self.call('review_normal_batch',await read_payload(request))
+
         @app.post('/api/categories',status_code=201)
         async def create_category(request:Request):
             return await self.call('create_category',await read_payload(request))

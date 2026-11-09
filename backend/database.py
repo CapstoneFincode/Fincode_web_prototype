@@ -52,6 +52,10 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def review_content_digest(email, reference, facts):
+    return digest({'title':email['subject'], 'body':email['body'], 'reference':reference, 'requiredFacts':facts})
+
+
 def insert(conn, table, values):
     conn.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
         sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, values)),
@@ -89,7 +93,9 @@ class Database:
 
     def datasets(self):
         with self.connect() as conn:
-            normal = conn.execute('''SELECT e.*, g.reference_summary, COALESCE(g.required_facts,e.required_facts) AS quality_facts FROM
+            normal = conn.execute('''SELECT e.*, g.reference_summary, COALESCE(g.required_facts,e.required_facts) AS quality_facts,
+                g.id AS ground_truth_id, g.revision AS ground_truth_revision,
+                g.review_status AS reference_review_status, g.review_note AS reference_review_note FROM
                 (SELECT DISTINCT ON (case_key) * FROM email_cases ORDER BY case_key,revision DESC) e
                 LEFT JOIN LATERAL (SELECT * FROM ground_truths WHERE email_case_id=e.id ORDER BY revision DESC LIMIT 1) g ON true
                 WHERE e.archived_at IS NULL ORDER BY e.created_at, e.case_key''').fetchall()
@@ -102,6 +108,10 @@ class Database:
                 'categories': [dict(id=r['id'], name=r['name'], scope=r['scope']) for r in categories],
                 'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
                     reference=r['reference_summary'] or '', requiredFacts=r['quality_facts'] or [], reviewStatus=r['label_review_status'],
+                    groundTruthId=str(r['ground_truth_id']) if r['ground_truth_id'] else None,
+                    groundTruthVersion=r['ground_truth_revision'], referenceReviewStatus=r['reference_review_status'],
+                    referenceReviewNote=r['reference_review_note'],
+                    reviewContentSha256=review_content_digest(r,r['reference_summary'] or '',r['quality_facts'] or []),
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in normal],
                 'attacks': [dict(id=r['scenario_key'], dbId=str(r['id']), dbVersion=r['revision'], name=r['name'], vector=r['vector'],
                     categoryId=r['category_id'], registeredAt=r['registered_at'].astimezone(timezone.utc).isoformat().replace('+00:00','Z'),
@@ -110,6 +120,58 @@ class Database:
                     expectedOutput=r['success_criterion'].get('expectedOutput',''),
                     evaluationMode=r['success_criterion'].get('type','manual'), enabled=r['enabled'],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in attacks]}
+
+    def review_normal_batch(self, data):
+        """Approve exactly the supplied versions atomically without changing their content."""
+        if not isinstance(data,dict) or set(data)-{'items','note'}:
+            raise DataError('검토할 자료와 승인 메모만 보내 주세요.')
+        items=data.get('items')
+        if not isinstance(items,list) or not 1<=len(items)<=100:
+            raise DataError('검토할 정상 이메일을 1~100개 선택해 주세요.')
+        note='사용자 요청에 따른 승인 처리: '+text(data.get('note'),'승인 메모',2000).strip()
+        checked=[]
+        for item in items:
+            fields={'id','dbVersion','groundTruthId','groundTruthVersion','contentSha256'}
+            if not isinstance(item,dict) or set(item)!=fields:
+                raise DataError('이메일과 기준 정답의 ID, 버전, 내용 해시를 보내 주세요.')
+            key=text(item['id'],'이메일 ID',150)
+            if any(type(item[field]) is not int or item[field]<1 for field in ('dbVersion','groundTruthVersion')):
+                raise DataError('이메일과 기준 정답의 버전을 확인해 주세요.')
+            content_hash=item['contentSha256']
+            if not isinstance(content_hash,str) or len(content_hash)!=64 or any(c not in '0123456789abcdef' for c in content_hash):
+                raise DataError('검토할 내용의 SHA-256 해시를 확인해 주세요.')
+            checked.append({**item,'id':key,'groundTruthId':uuid(item['groundTruthId'])})
+        if len({item['id'] for item in checked})!=len(checked):
+            raise DataError('서로 다른 정상 이메일을 선택해 주세요.')
+        reviewed=already=0
+        with self.connect() as conn:
+            # Match save/archive locks; stable ordering avoids opposing batch lock order.
+            for item in sorted(checked,key=lambda item:item['id']):
+                conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('normal'+item['id'],))
+            ready=[]
+            for item in checked:
+                email=conn.execute('SELECT * FROM email_cases WHERE case_key=%s ORDER BY revision DESC LIMIT 1 FOR UPDATE',(item['id'],)).fetchone()
+                if not email or email['revision']!=item['dbVersion'] or email['archived_at'] is not None:
+                    raise DataError('이메일 버전이 바뀌었거나 사용할 수 없습니다. 새로고침해 주세요.',409,'REVIEW_CONFLICT')
+                if email['expected_label']!='normal' or email['provenance']=='sample' or email['label_review_status']=='sample':
+                    raise DataError('예시가 아닌 정상 이메일만 승인할 수 있습니다.',400,'REVIEW_NOT_ELIGIBLE')
+                reference=conn.execute('SELECT * FROM ground_truths WHERE email_case_id=%s ORDER BY revision DESC LIMIT 1 FOR UPDATE',(email['id'],)).fetchone()
+                if not reference or not reference['reference_summary'].strip() or reference['review_status']=='sample':
+                    raise DataError('검토할 기준 정답이 있는 정상 이메일을 선택해 주세요.',400,'REVIEW_NOT_ELIGIBLE')
+                if str(reference['id'])!=item['groundTruthId'] or reference['revision']!=item['groundTruthVersion'] or review_content_digest(email,reference['reference_summary'],reference['required_facts'])!=item['contentSha256']:
+                    raise DataError('기준 정답의 버전 또는 내용이 바뀌었습니다. 새로고침해 주세요.',409,'REVIEW_CONFLICT')
+                ready.append((email,reference))
+            for email,reference in ready:
+                if email['label_review_status']=='reviewed' and reference['review_status']=='reviewed':
+                    already+=1
+                    continue
+                # Preserve previous approval timestamps/notes when only one side needs approval.
+                if email['label_review_status']!='reviewed':
+                    conn.execute("UPDATE email_cases SET label_review_status='reviewed',label_reviewed_by=%s,label_reviewed_at=now() WHERE id=%s",(self.actor,email['id']))
+                if reference['review_status']!='reviewed':
+                    conn.execute("UPDATE ground_truths SET review_status='reviewed',reviewed_by=%s,reviewed_at=now(),review_note=%s WHERE id=%s",(self.actor,note,reference['id']))
+                reviewed+=1
+        return {'reviewedCount':reviewed,'alreadyReviewedCount':already,'ids':[item['id'] for item in checked]}
 
     def create_category(self, data):
         if not isinstance(data, dict):
