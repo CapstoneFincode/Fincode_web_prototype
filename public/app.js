@@ -242,7 +242,7 @@ function databaseExperimentsPage(){
     `<form id="db-experiment-form"><div class="experiment-grid category-experiment"><div class="experiment-main"><section class="panel"><div class="panel-head"><div><span class="section-kicker">01 / CONFIGURATION</span><h2>실험 기본 설정</h2></div>${tag(workflowPreview?'브라우저 저장 데이터':'DB 저장','green')}</div><div class="body-pad" style="padding-top:5px">
     <div class="field-row"><div class="field"><label for="db-name">실험 이름</label><input id="db-name" name="name" required maxlength="200" placeholder="예: 카테고리별 기준 실험"></div><div class="field"><label for="db-kind">실험 종류</label><select id="db-kind" name="kind"><option value="attack" ${state.dbKind==='attack'?'selected':''}>공격 시나리오</option><option value="normal" ${state.dbKind==='normal'?'selected':''}>정상 이메일 · 응답 거부 확인</option></select></div></div>
     <div class="field-row"><div class="field"><label for="db-model">${workflowPreview?'대상 모델 · 화면 확인용':'호출 모델'}</label><select id="db-model" name="model" required>${workflowPreview?modelOptions(state.model):liveModelOptions()}</select>${workflowPreview?'<span class="hint">과거 모델 표기로 구성만 확인해요. 모델을 호출하지 않아요.</span>':''}</div><div id="db-attack-policy" class="field execution-policy ${state.dbKind==='normal'?'hidden':''}"><span class="field-label">공격 실행 방식</span><strong>시나리오당 1회 호출</strong><span class="hint">카테고리별 선택 수의 합계만큼 실행해요.</span></div>${normalRepeatField()}</div>
-    <div class="field"><label for="db-email">기준 정상 이메일</label><select id="db-email" name="emailId" required>${state.normal.map(x=>`<option value="${esc(workflowPreview?x.id:x.dbId)}">${esc(x.title)} · ${x.reviewStatus==='reviewed'?'정상 라벨 검토 완료':x.provenance==='sample'?'합성 예시':'검토 대기'}</option>`).join('')}</select></div><div class="field"><span class="field-label">보안 방어</span><div class="radio-options"><label class="radio-option"><input type="radio" checked disabled>OFF · 기준 환경</label><label class="radio-option is-unavailable"><input type="radio" disabled>ON · 방어 구현 후 지원</label></div></div></div></section>
+    <p id="db-scenario-input-note" class="hint ${state.dbKind==='normal'?'hidden':''}">기존 시스템 지침과 선택한 시나리오의 공격문만 전송해요. 각 시나리오는 별도 요청으로 실행해요.</p><div id="db-email-field" class="field ${state.dbKind==='normal'?'':'hidden'}"><label for="db-email">실험할 정상 이메일</label><select id="db-email" name="emailId" ${state.dbKind==='normal'?'required':'disabled'}>${state.normal.map(x=>`<option value="${esc(workflowPreview?x.id:x.dbId)}">${esc(x.title)} · ${x.reviewStatus==='reviewed'?'정상 라벨 검토 완료':x.provenance==='sample'?'합성 예시':'검토 대기'}</option>`).join('')}</select></div><div class="field"><span class="field-label">보안 방어</span><div class="radio-options"><label class="radio-option"><input type="radio" checked disabled>OFF · 기준 환경</label><label class="radio-option is-unavailable"><input type="radio" disabled>ON · 방어 구현 후 지원</label></div></div></div></section>
     <section id="db-category-section" class="panel category-picker-panel ${state.dbKind==='normal'?'hidden':''}">${categoryPicker()}</section></div>
     <section class="panel selection-panel"><div class="panel-head"><div><span class="section-kicker">03 / REVIEW</span><h2>실행 전 확인</h2></div>${tag(workflowPreview?'모델 호출 없음':'실제 모델 호출','amber')}</div><div class="body-pad" style="padding-top:5px"><div id="db-selection-summary">${categorySelectionSummary(state.dbKind==='normal')}</div><p id="db-submit-error" class="error" role="alert"></p><button type="button" class="btn primary full-width" data-action="${workflowPreview?'workflow-preview':'db-run'}" ${(workflowPreview?state.dbKind!=='attack':state.connection!=='ready')||state.jobSubmitting?'disabled':''}>${state.jobSubmitting?'등록 중…':workflowPreview?'선택 시나리오 결과 미리보기':'실제 실험 실행'} ${icon('arrow')}</button><p class="local-note">${workflowPreview?'시나리오에 저장된 공격문과 판정 기준을 사용해요. 프롬프트나 판정을 다시 입력하지 않아요. 실제 실행은 API·DB가 연결된 환경에서 가능해요.':'브라우저를 닫아도 서버에서 실행돼요. 오류가 난 호출은 자동 재시도하지 않아요.'}</p></div></section></div></form>`+databaseResultsPanel();
 }
@@ -256,7 +256,7 @@ async function submitDatabaseExperiment(){
   if(kind==='attack'&&plan.error){$('#db-submit-error').textContent=plan.error;return;}
   const ids=kind==='attack'?plan.runnable.map(a=>a.dbId):[];
   if(ids.some(id=>typeof id!=='string'||!id)){ $('#db-submit-error').textContent='선택한 공격의 DB 정보를 새로고침해 주세요.';return;}
-  const payload={name:fields.get('name').trim(),kind,model:fields.get('model'),emailId:fields.get('emailId'),repeat:kind==='normal'?normalRepeat.repeat:1,scenarioIds:ids,defense:'off'};
+  const payload={name:fields.get('name').trim(),kind,model:fields.get('model'),...(kind==='normal'?{emailId:fields.get('emailId')}:{}),repeat:kind==='normal'?normalRepeat.repeat:1,scenarioIds:ids,defense:'off'};
   const fingerprint=JSON.stringify(payload);
   if(form.dataset.fingerprint!==fingerprint){form.dataset.fingerprint=fingerprint;form.dataset.requestKey=createId();}
   payload.idempotencyKey=form.dataset.requestKey;
@@ -308,9 +308,7 @@ async function previewSelectedExperiment(){
   const form=$('#db-experiment-form');if(!form.reportValidity())return;
   const fields=new FormData(form),plan=currentAttackPlan();
   if(plan.error){$('#db-submit-error').textContent=plan.error;return;}
-  const email=state.normal.find(e=>e.id===fields.get('emailId'));
-  if(!email){$('#db-submit-error').textContent='기준 정상 이메일을 선택해 주세요.';return;}
-  const config=structuredClone({id:'preview-'+createId(),name:fields.get('name').trim(),model:fields.get('model'),email,scenarios:plan.runnable,categories:state.categories});
+  const config=structuredClone({id:'preview-'+createId(),name:fields.get('name').trim(),model:fields.get('model'),scenarios:plan.runnable,categories:state.categories});
   const button=$('[data-action="workflow-preview"]');state.jobSubmitting=true;if(button)button.disabled=true;
   try{
     const {createWorkflowPreview}=await import('./workflow-preview.js');
@@ -404,6 +402,9 @@ function syncExperimentKind(){
   $('#db-category-section')?.classList.toggle('hidden',normal);
   $('#db-attack-policy')?.classList.toggle('hidden',normal);
   $('#db-normal-repeat-field')?.classList.toggle('hidden',!normal);
+  $('#db-email-field')?.classList.toggle('hidden',!normal);
+  $('#db-scenario-input-note')?.classList.toggle('hidden',normal);
+  const email=$('#db-email');if(email){email.disabled=!normal;email.required=normal;}
   if(previewMode){$('#preview-normal-config')?.classList.toggle('hidden',!normal);$('#preview-attack-config')?.classList.toggle('hidden',normal);$('#preview-plan-actions')?.classList.toggle('hidden',normal);$('#preview-normal-actions')?.classList.toggle('hidden',!normal);}
   const repeat=$('#db-normal-repeat');if(repeat){repeat.disabled=!normal;repeat.required=normal;}
   $$('input[name="category-count"]').forEach(el=>{const enabled=!normal&&state.vectorIds.includes(el.dataset.category.split(':')[0])&&state.categoryIds.includes(el.dataset.category);el.disabled=!enabled;el.required=enabled;});

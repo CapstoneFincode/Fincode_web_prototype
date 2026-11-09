@@ -98,7 +98,7 @@ class Database:
                 FROM attack_scenarios a ORDER BY scenario_key,revision DESC) a
                 WHERE archived_at IS NULL ORDER BY registered_at,scenario_key''').fetchall()
             categories = conn.execute('SELECT id,name,scope FROM attack_categories ORDER BY sort_order,name,id').fetchall()
-        return {'evaluationModes': list(EVALUATION_MODES),
+        return {'evaluationModes': list(EVALUATION_MODES), 'attackInputMode': 'scenario-only-v1',
                 'categories': [dict(id=r['id'], name=r['name'], scope=r['scope']) for r in categories],
                 'normal': [dict(id=r['case_key'], dbId=str(r['id']), dbVersion=r['revision'], title=r['subject'], body=r['body'],
                     reference=r['reference_summary'] or '', requiredFacts=r['quality_facts'] or [], reviewStatus=r['label_review_status'],
@@ -254,14 +254,18 @@ class Database:
         first_run=None
         for number,(email,scenario,label) in enumerate(inputs,1):
             for repeat in range(1,data.get('repeat',1)+1):
-                subject,body=email['subject'],email['body']
-                messages=[{'role':'system','content':config['systemPrompt']},{'role':'user','content':f'제목: {subject}\n\n{body}'}]
+                messages=[{'role':'system','content':config['systemPrompt']}]
                 if scenario:
-                    if scenario['channel']=='user_instruction':
-                        messages.append({'role':'user','content':scenario['payload']})
-                    else:
-                        messages[1]['content']+='\n\n'+scenario['payload']
-                snapshot={'email':{'subject':subject,'body':body},'messages':messages,'injectionStrategy':'separate-user-message' if scenario and scenario['vector']=='direct' else 'append-email-body' if scenario else 'none',
+                    # Both vector categories test the saved payload verbatim. No
+                    # baseline email, title wrapper, decoding or normalization.
+                    messages.append({'role':'user','content':scenario['payload']})
+                    email_snapshot=None
+                else:
+                    email_snapshot={'subject':email['subject'],'body':email['body']}
+                    messages.append({'role':'user','content':f"제목: {email['subject']}\n\n{email['body']}"})
+                snapshot={'email':email_snapshot,'messages':messages,
+                    'inputMode':'scenario-only-v1' if scenario else 'email-v1',
+                    'injectionStrategy':'scenario-only' if scenario else 'none',
                     'successCriterion':scenario['success_criterion'] if scenario else None,
                     'attackCategoryId':scenario['category_id'] if scenario else None,
                     'attackScenario':dict(id=str(scenario['id']),key=scenario['scenario_key'],revision=scenario['revision'],
@@ -270,7 +274,7 @@ class Database:
                 cid,rid=str(uuid4()),str(uuid4())
                 first_run=first_run or rid
                 insert(conn,'experiment_cases',dict(id=cid,experiment_id=eid,case_number=number,repeat_index=repeat,expected_label=label,
-                    email_case_id=email.get('id'),attack_scenario_id=scenario['id'] if scenario else None,provider='baze',requested_model=data['model'],
+                    email_case_id=email.get('id') if email else None,attack_scenario_id=scenario['id'] if scenario else None,provider='baze',requested_model=data['model'],
                     prompt_version=config['version'],system_prompt=config['systemPrompt'],inference_settings={'max_tokens':config['maxTokens'],'stream':False},
                     input_snapshot=snapshot,input_sha256=digest(snapshot),credential_alias='server-key-1'))
                 insert(conn,'runs',dict(id=rid,experiment_case_id=cid,security_gateway_enabled=False,idempotency_key=rid,
@@ -296,11 +300,11 @@ class Database:
         if 'codex' in data['model'].lower():
             raise DataError('현재 요약 경로에서는 Codex 모델을 지원하지 않습니다.')
         with self.connect() as conn:
-            email=conn.execute('SELECT * FROM email_cases WHERE id=%s AND archived_at IS NULL',(uuid(data.get('emailId')),)).fetchone()
-            if not email:
-                raise DataError('기준 이메일을 DB에서 선택해 주세요.')
             kind=data.get('kind','attack')
             if kind=='normal':
+                email=conn.execute('SELECT * FROM email_cases WHERE id=%s AND archived_at IS NULL',(uuid(data.get('emailId')),)).fetchone()
+                if not email:
+                    raise DataError('정상 이메일을 DB에서 선택해 주세요.')
                 if email['expected_label']!='normal':
                     raise DataError('정상 라벨 이메일을 선택해 주세요.')
                 inputs=[(email,None,'normal')]
@@ -317,7 +321,8 @@ class Database:
                         raise DataError('사용할 수 없는 공격 시나리오입니다.')
                     if a['channel'] not in ('user_instruction','email_body'):
                         raise DataError('첨부파일 공격은 추출 기능 구현 후 실행할 수 있습니다.')
-                    inputs.append((email,a,'attack'))
+                    # Ignore a legacy client's emailId for attack experiments.
+                    inputs.append((None,a,'attack'))
             else:
                 raise DataError('실험 종류를 확인해 주세요.')
             return self._bundle(conn,{**data,'kind':kind},config,inputs)

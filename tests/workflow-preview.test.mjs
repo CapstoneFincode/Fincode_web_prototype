@@ -12,17 +12,17 @@ import * as workflowModule from '../preview/attacktest/workflow-preview.js';
 
 const systemPrompt=JSON.parse(readFileSync(new URL('../config/email-baseline.json',import.meta.url),'utf8')).systemPrompt;
 const scenario=(id,extra={})=>({...seeds.attackSeeds[0],id,name:id,payload:'저장된 공격문 '+id,expectedOutput:'SAVED_MARKER',evaluationMode:'exact',...extra});
-const input=()=>({id:'preview-1',name:'선택한 구성',model:'화면 확인용 모델',email:structuredClone(seeds.normalSeeds[0]),categories:structuredClone(categoryTools.categorySeeds),systemPrompt,scenarios:[scenario('direct'),scenario('indirect',{vector:'indirect',channel:'email'})]});
+const input=()=>({id:'preview-1',name:'선택한 구성',model:'화면 확인용 모델',categories:structuredClone(categoryTools.categorySeeds),systemPrompt,scenarios:[scenario('direct'),scenario('indirect',{vector:'indirect',channel:'email'})]});
 test('workflow preview uses saved payload and criterion, with direct and indirect messages each once',()=>{
   const config=input(),detail=workflowModule.createWorkflowPreview(config);
   assert.equal(detail.exampleOnly,true);assert.equal(detail.runs.length,2);
   const [direct,indirect]=detail.runs;
-  assert.equal(direct.input_snapshot.messages.length,3);assert.equal(direct.input_snapshot.messages[2].content,config.scenarios[0].payload);
-  assert.equal(indirect.input_snapshot.messages.length,2);assert.ok(indirect.input_snapshot.messages[1].content.endsWith(config.scenarios[1].payload));
+  assert.equal(direct.input_snapshot.messages.length,2);assert.equal(direct.input_snapshot.messages[1].content,config.scenarios[0].payload);
+  assert.equal(indirect.input_snapshot.messages.length,2);assert.equal(indirect.input_snapshot.messages[1].content,config.scenarios[1].payload);
   assert.equal(direct.input_snapshot.successCriterion.expectedOutput,'SAVED_MARKER');assert.equal(direct.evaluations[0].boolean_value,true);
   assert.equal(direct.repeat_index,1);assert.equal(indirect.repeat_index,1);assert.deepEqual(direct.calls,[]);assert.equal(direct.service_total_tokens,null);assert.equal(direct.backend_latency_ms,null);
-  config.scenarios[0].payload='나중에 수정';config.email.body='나중에 수정';
-  assert.equal(direct.input_snapshot.attackScenario.payload,'저장된 공격문 direct');assert.notEqual(direct.input_snapshot.email.body,config.email.body);
+  config.scenarios[0].payload='나중에 수정';
+  assert.equal(direct.input_snapshot.attackScenario.payload,'저장된 공격문 direct');assert.equal(direct.input_snapshot.email,null);assert.equal(direct.input_snapshot.inputMode,'scenario-only-v1');
 });
 test('manual rules remain unjudged; sample response does not invent human review',()=>{
   const config=input();config.scenarios=[scenario('manual',{evaluationMode:'manual',expectedOutput:'IGNORED'}),scenario('leak',{evaluationMode:'system_prompt_leak'})];
@@ -54,13 +54,13 @@ function app({workflow=true}={}){
 }
 test('workflow preview reuses the existing experiment form without a prompt or verdict input',()=>{
   const a=app(),html=a.pages.experiments();
-  assert.match(html,/id="db-experiment-form"/);assert.match(html,/기준 정상 이메일/);assert.match(html,/workflow-preview/);assert.match(html,/선택 시나리오 결과 미리보기/);
+  assert.match(html,/id="db-experiment-form"/);assert.match(html,/id="db-email-field" class="field hidden"/);assert.match(html,/id="db-email"[^>]+disabled/);assert.match(html,/workflow-preview/);assert.match(html,/선택 시나리오 결과 미리보기/);
   assert.doesNotMatch(html,/id="attack-input"|id="response"|name="evidence"|name="evaluationMode"/);
   assert.equal(a.state.dbReady,false);assert.equal(a.state.dbConfigured,false);
   assert.doesNotMatch(app({workflow:false}).pages.experiments(),/data-action="workflow-preview"/);
 });
 test('selected registration-ordered scenarios feed history and result detail without API calls',async()=>{
-  const a=app();a.state.attacks=[scenario('first'),scenario('second'),scenario('disabled',{enabled:false})];a.state.vectorIds=['direct'];a.state.categoryIds=['direct:instruction-override'];a.state.categoryCounts={'direct:instruction-override':2};
+  const a=app();a.state.normal=[];a.state.attacks=[scenario('first'),scenario('second'),scenario('disabled',{enabled:false})];a.state.vectorIds=['direct'];a.state.categoryIds=['direct:instruction-override'];a.state.categoryCounts={'direct:instruction-override':2};
   await a.previewSelectedExperiment();assert.deepEqual(a.fetched,['./baseline.json']);assert.equal(a.workflowReports.length,1);
   const detail=a.workflowReports[0];assert.deepEqual(detail.runs.map(r=>r.input_snapshot.attackScenario.key),['first','second']);assert.equal(detail.runs.length,2);assert.equal(a.shown[0],detail.experiment.id);
   assert.match(a.workflowHistoryPanel(),/선택 결과/);assert.match(a.workflowHistoryPanel(),/workflow-detail/);assert.equal(a.state.jobs.length,0);assert.equal(a.state.jobSubmitting,false);
