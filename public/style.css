@@ -37,3 +37,52 @@
 :root #expected-output-field[hidden]{display:none!important}
 .evaluation-result{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:10px;background:#f8faff}
 .evaluation-result h3{display:flex;align-items:center;gap:10px}
+
+/* Model evaluation navigation keeps the existing summarizer and comparison separate. */
+.sidebar{overflow-y:auto}
+.nav-parent{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border-radius:9px;color:#66748b;font-size:12px;font-weight:500;text-align:left}
+.nav-parent:hover{background:#f5f7fc;color:var(--blue)}
+.nav-parent.active{color:var(--blue);background:#f5f8ff;font-weight:700}
+.nav-parent>span{flex:1;min-width:0}
+.nav-parent .nav-chevron{width:14px;height:14px;transition:transform .15s}
+.nav-parent[aria-expanded="true"] .nav-chevron{transform:rotate(90deg)}
+.evaluation-subnav{display:flex;flex-direction:column;gap:3px;margin:4px 0 5px 24px;padding-left:10px;border-left:1px solid #e3eaf5}
+.evaluation-subnav[hidden]{display:none}
+.nav .evaluation-subnav a{font-size:12px;padding:9px 10px;gap:9px;border-radius:7px}
+.nav .evaluation-subnav a.active:before{display:none}
+.subnav-dot{width:5px;height:5px;border-radius:50%;background:#b8c3d5;flex-shrink:0}
+.evaluation-subnav a.active .subnav-dot{background:var(--blue)}
+.comparison-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(270px,1fr);gap:22px;align-items:start}
+.comparison-main,.comparison-side{display:flex;flex-direction:column;gap:22px;min-width:0}
+.comparison-grid .panel-head{align-items:flex-start;gap:12px;flex-wrap:wrap}
+.comparison-grid .panel-head p{max-width:460px}
+.comparison-grid .field-row{margin-bottom:8px}
+.comparison-grid select{width:100%;min-width:0;text-overflow:ellipsis}
+.comparison-hint{font-size:11px;line-height:1.8;color:#7c8ca4;margin:10px 0 0}
+.comparison-baseline{display:flex;gap:12px;align-items:center;background:#f1f6ff;border:1px solid #dfe8f8;border-radius:10px;padding:14px;margin-bottom:20px;color:#486b9b}
+.comparison-baseline>div{flex:1;min-width:0}
+.comparison-baseline strong{display:block;font-size:12px}
+.comparison-baseline span:not(.tag){display:block;font-size:10px;margin-top:3px;color:#7c90ac}
+.comparison-defense{border:0;padding:0;margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:0}
+.comparison-defense legend{font-size:12px;font-weight:600;margin-bottom:12px;color:#506381}
+.comparison-defense-option{display:flex;align-items:flex-start;gap:10px;padding:14px;border:1px solid #e0e7f1;border-radius:9px;cursor:pointer;min-width:0;background:#fff}
+.comparison-defense-option input{margin:3px 0 0;accent-color:var(--blue);flex-shrink:0;width:15px;height:15px}
+.comparison-defense-option strong{font-size:12px;font-weight:600;color:#4b6283;display:block}
+.comparison-defense-option small{font-size:10px;line-height:1.8;color:#8998ae;display:block;margin-top:5px}
+.comparison-defense-option:has(input:checked){border-color:#8aa8e4;background:#f5f8ff}
+.comparison-defense-option:has(input:focus-visible){outline:3px solid #94b4ff;outline-offset:2px}
+.comparison-details{margin:0}
+.comparison-details>div{display:flex;justify-content:space-between;align-items:baseline;gap:15px;padding:10px 0;border-bottom:1px solid #edf1f7;font-size:11px}
+.comparison-details dt{color:#7d8da4;flex-shrink:0}
+.comparison-details dd{margin:0;color:#466084;text-align:right;font-weight:600;overflow-wrap:anywhere;min-width:0}
+.comparison-run{width:100%;margin-top:20px}
+.comparison-data-count{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+.comparison-data-count strong{font-size:30px;color:#426ba8}
+.comparison-data-count span{font-size:11px;color:#8595ac}
+.comparison-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;padding:6px 23px 23px}
+.comparison-metrics>div{display:flex;flex-direction:column;gap:6px;padding:15px;background:#f7f9fd;border-radius:9px;min-width:0}
+.comparison-metrics strong{font-size:12px;color:#526c91}
+.comparison-metrics span,.comparison-metrics small{font-size:10px;line-height:1.7;color:#8b9ab0}
+.comparison-metrics small{margin-top:8px;color:#9da8b9}
+@media(max-width:1100px){.comparison-grid{grid-template-columns:1fr}.comparison-side{display:grid;grid-template-columns:1fr 1fr}}
+@media(max-width:650px){.comparison-side{display:flex}.comparison-defense{grid-template-columns:1fr}.comparison-metrics{grid-template-columns:1fr 1fr;gap:10px;padding:6px 16px 16px}.comparison-baseline{flex-wrap:wrap}.comparison-grid{gap:16px}.comparison-main,.comparison-side{gap:16px}}
