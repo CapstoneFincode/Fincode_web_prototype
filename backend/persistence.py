@@ -100,6 +100,35 @@ class Persistence:
         async def review_normal_batch(request:Request):
             return await self.call('review_normal_batch',await read_payload(request))
 
+        @app.get('/api/performance/dataset')
+        async def performance_dataset():
+            return await self.call('performance_dataset')
+
+        @app.get('/api/performance')
+        async def performance_list():
+            return await self.call('performance_list')
+
+        @app.post('/api/performance',status_code=202)
+        async def enqueue_performance(request:Request):
+            data=await read_payload(request)
+            if not key():
+                raise DataError('서버에 BAZE_API_KEY를 설정해 주세요.',503,'API_KEY_MISSING')
+            return await self.call('enqueue_performance',data,self.config)
+
+        @app.get('/api/performance/{identifier}')
+        async def performance_detail(identifier:str):
+            return await self.call('performance_detail',identifier)
+
+        @app.get('/api/performance/{identifier}/cases')
+        async def performance_cases(identifier:str,offset:int=0,limit:int=20):
+            return await self.call('performance_cases',identifier,offset,limit)
+
+        @app.post('/api/performance/{identifier}/cancel')
+        async def cancel_performance(identifier:str,request:Request):
+            if await read_payload(request)!={}:
+                raise DataError('취소 요청은 빈 JSON 객체로 보내 주세요.')
+            return await self.call('cancel_performance',identifier)
+
         @app.post('/api/categories',status_code=201)
         async def create_category(request:Request):
             return await self.call('create_category',await read_payload(request))

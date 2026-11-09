@@ -87,14 +87,14 @@ test('comparison choices remain drafts, preserve both existing execution setting
   a.updateComparisonDraft(0,'model-a');
   a.updateComparisonDraft(1,'model-b');
   a.updateComparisonDraft('defense','separate');
-  assert.deepEqual(plain(a.state.comparisonDraft),{models:['model-a','model-b'],defense:'separate'});
+  assert.deepEqual(plain(a.state.comparisonDraft),{models:['model-a','model-b'],defense:'off'});
   assert.equal(a.state.liveModel,'summary-model');
   assert.equal(a.state.model,'attack-plan-model');
   assert.equal(a.state.defense,'both');
   assert.deepEqual(plain(a.summaryRequest()),request);
   assert.equal(a.summaryRequest().defense,'off');
   location.hash='#email';a.route();location.hash='#comparison';a.route();
-  assert.deepEqual(plain(a.state.comparisonDraft),{models:['model-a','model-b'],defense:'separate'});
+  assert.deepEqual(plain(a.state.comparisonDraft),{models:['model-a','model-b'],defense:'off'});
   assert.equal(calls.length,0);
 });
 
@@ -104,14 +104,14 @@ test('unknown draft models, defense choices, and fields cannot alter settings or
   a.updateComparisonDraft(0,'model-a');
   const before=plain(a.state.comparisonDraft);
   for(const [field,value] of [[0,'unavailable-model'],[1,'unavailable-model'],[-1,'model-a'],[2,'model-a'],[0.5,'model-a'],['0','model-a'],
-      ['defense','invented-defense'],['liveModel','model-b'],['__proto__','model-b']]){
+      ['defense','invented-defense'],['defense','filter'],['defense','separate'],['defense','both'],['liveModel','model-b'],['__proto__','model-b']]){
     a.updateComparisonDraft(field,value);
     assert.deepEqual(plain(a.state.comparisonDraft),before);
   }
   assert.equal(calls.length,0);
 });
 
-test('comparison configuration is labeled as preparation and cannot execute the deferred comparison',()=>{
+test('comparison requires the evaluation dataset and keeps unimplemented defenses disabled',()=>{
   const {api:a,calls}=app();
   a.state.models=[{id:'model-a'},{id:'model-b'}];a.state.connection='ready';
   a.updateComparisonDraft(0,'model-a');a.updateComparisonDraft(1,'model-b');
@@ -119,8 +119,17 @@ test('comparison configuration is labeled as preparation and cannot execute the 
     a.updateComparisonDraft('defense',defense);
     const html=a.pages.comparison();
     assert.match(html,/<h1>모델 별 비교<\/h1>/);
-    assert.match(html,/준비|구현 예정/);
-    assert.match(openingTag(html,'button','comparison-run'),/\bdisabled\b/);
+    assert.equal(a.state.comparisonDraft.defense,'off');
+    const run=openingTag(html,'button','comparison-run');
+    assert.match(run,/\bdisabled\b/);
+    assert.match(run,/data-action="performance-run"/);
+    assert.match(run,/data-mode="comparison"/);
+    assert.doesNotMatch(html,/비교 실행 · 준비 중/);
+    for(const option of ['filter','separate','both']){
+      const input=(html.match(/<input\b[^>]*>/g)||[]).find(tag=>tag.includes('name="comparison-defense"')&&tag.includes('value="'+option+'"'));
+      assert.match(input,/\bdisabled\b/);
+      assert.doesNotMatch(input,/\bchecked\b/);
+    }
     assert.doesNotMatch(html,/undefined|NaN/);
   }
   assert.equal(calls.length,0);
@@ -147,25 +156,18 @@ test('provider model labels are escaped in comparison inputs and selected summar
   }
 });
 
-test('comparison counts distinguish pending candidates and samples from reviewed normal labels',()=>{
+test('normal email examples and label approvals alone do not enable comparison without the evaluation dataset',()=>{
   const {api:a}=app();
-  a.state.dbReady=true;
+  Object.assign(a.state,{dbReady:true,connection:'ready',models:[{id:'model-a'},{id:'model-b'}]});
   a.state.normal=[...structuredClone(seeds.normalSeeds),
-    {...seeds.normalSeeds[0],id:'pending-a',provenance:'user',reviewStatus:'pending'},
-    {...seeds.normalSeeds[1],id:'pending-b',provenance:'user',reviewStatus:'pending'}];
-  let html=a.pages.comparison();
-  assert.match(html,/<dt>정상 라벨 검토 완료<\/dt><dd>0건<\/dd>/);
-  assert.match(html,/<dt>검토 대기<\/dt><dd>2건<\/dd>/);
-  assert.match(html,/<dt>기존 합성 예시<\/dt><dd>5건<\/dd>/);
-  assert.match(html,/<strong>7<\/strong><span>건 · DB 정상 이메일/);
-  a.state.normal.find(row=>row.id==='pending-a').reviewStatus='reviewed';
-  html=a.pages.comparison();
-  assert.match(html,/<dt>정상 라벨 검토 완료<\/dt><dd>1건<\/dd>/);
-  assert.match(html,/<dt>검토 대기<\/dt><dd>1건<\/dd>/);
-  assert.match(html,/정상 라벨 검토와 기준 요약 검수는 별개/);
+    ...Array.from({length:100},(_,index)=>({...seeds.normalSeeds[0],id:'reviewed-'+index,provenance:'user',reviewStatus:'reviewed'}))];
+  a.updateComparisonDraft(0,'model-a');a.updateComparisonDraft(1,'model-b');
+  const html=a.pages.comparison();
+  assert.match(openingTag(html,'button','comparison-run'),/\bdisabled\b/);
+  assert.doesNotMatch(html,/<strong>105<\/strong>/);
 });
 
-test('bound model and defense controls update only the draft summary without submitting requests',()=>{
+test('bound model controls update only independent OFF settings without submitting requests',()=>{
   const {api:a,queryLists,elements,calls}=app();
   const modelA=element({value:'model-a',dataset:{comparisonIndex:'0'}});
   const modelB=element({value:'model-b',dataset:{comparisonIndex:'1'}});
@@ -175,11 +177,11 @@ test('bound model and defense controls update only the draft summary without sub
   Object.assign(a.state,{route:'comparison',connection:'ready',models:[{id:'model-a'},{id:'model-b'}]});
   a.bindPage();
   modelA.listeners.change({target:modelA});modelB.listeners.change({target:modelB});
-  defense.listeners.change({target:defense});
-  assert.deepEqual(plain(a.state.comparisonDraft),{models:['model-a','model-b'],defense:'filter'});
-  assert.match(elements['#comparison-summary'].innerHTML,/입력 탐지 · 구현 예정/);
-  defense.checked=false;defense.value='both';defense.listeners.change({target:defense});
-  assert.equal(a.state.comparisonDraft.defense,'filter');
+  defense.listeners.change?.({target:defense});
+  assert.deepEqual(plain(a.state.comparisonDraft),{models:['model-a','model-b'],defense:'off'});
+  assert.match(elements['#comparison-summary'].innerHTML,/OFF/);
+  defense.checked=false;defense.value='both';defense.listeners.change?.({target:defense});
+  assert.equal(a.state.comparisonDraft.defense,'off');
   assert.equal(calls.length,0);
 });
 
@@ -193,7 +195,7 @@ test('comparison grows from two to five, removes only extra slots, and preserves
     a.addComparisonModel();a.updateComparisonDraft(index,a.state.models[index].id);
   }
   a.addComparisonModel();
-  assert.deepEqual(plain(a.state.comparisonDraft),{models:['a','b','c','d','e'],defense:'both'});
+  assert.deepEqual(plain(a.state.comparisonDraft),{models:['a','b','c','d','e'],defense:'off'});
   const html=a.pages.comparison();
   assert.equal((html.match(/data-comparison-index=/g)||[]).length,5);
   assert.match((html.match(/<button\b[^>]*>/g)||[]).find(tag=>tag.includes('data-action="comparison-add-model"')),/\bdisabled\b/);
@@ -204,62 +206,65 @@ test('comparison grows from two to five, removes only extra slots, and preserves
   a.addComparisonModel();
   assert.deepEqual(plain(a.state.comparisonDraft.models),['a','b','c','e','']);
   a.removeComparisonModel(4);a.removeComparisonModel(3);a.removeComparisonModel(2);a.removeComparisonModel(2);
-  assert.deepEqual(plain(a.state.comparisonDraft),{models:['a','b'],defense:'both'});
+  assert.deepEqual(plain(a.state.comparisonDraft),{models:['a','b'],defense:'off'});
   assert.equal(calls.length,0);
 });
 
-test('single evaluation has independent model and defense drafts and no execution path',()=>{
+test('single evaluation preserves independent selections and cannot run without the evaluation dataset',()=>{
   const {api:a,calls,location}=app();
   Object.assign(a.state,{models:[{id:'single'},{id:'comparison'}],liveModel:'summarizer',model:'attack',defense:'both',connection:'ready'});
   const request=plain(a.summaryRequest());
   a.updateComparisonDraft(0,'comparison');a.updateComparisonDraft('defense','separate');
   const comparison=plain(a.state.comparisonDraft);
   a.updateSingleEvaluationDraft('model','single');a.updateSingleEvaluationDraft('defense','filter');
-  assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'single',defense:'filter'});
+  assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'single',defense:'off'});
   for(const [field,value] of [['model','unknown'],['defense','unknown'],['liveModel','single'],['__proto__','single']]){
     a.updateSingleEvaluationDraft(field,value);
-    assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'single',defense:'filter'});
+    assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'single',defense:'off'});
   }
   location.hash='#comparison';a.route();location.hash='#single-evaluation';a.route();
-  assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'single',defense:'filter'});
+  assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'single',defense:'off'});
   assert.deepEqual(plain(a.state.comparisonDraft),comparison);
   assert.deepEqual(plain(a.summaryRequest()),request);
   assert.equal(a.state.model,'attack');assert.equal(a.state.defense,'both');
   const html=a.pages['single-evaluation']();
   assert.match(html,/<h1>단일 모델 성능 평가<\/h1>/);
   assert.equal((html.match(/data-single-evaluation-field="model"/g)||[]).length,1);
-  assert.match(openingTag(html,'button','single-evaluation-run'),/\bdisabled\b/);
+  const run=openingTag(html,'button','single-evaluation-run');
+  assert.match(run,/\bdisabled\b/);
+  assert.match(run,/data-action="performance-run"/);
+  assert.match(run,/data-mode="single"/);
   assert.doesNotMatch(html,/data-action="(?:live-summary|db-run|comparison-add-model)"|undefined|NaN/);
   a.updateSingleEvaluationDraft('model','');
   assert.equal(a.state.singleEvaluationDraft.model,'');
   assert.equal(calls.length,0);
 });
 
-test('single evaluation controls bind model and defense changes without changing comparison',()=>{
+test('single evaluation model changes preserve comparison and ignore unavailable defense choices',()=>{
   const {api:a,queryLists,elements,calls}=app();
   const model=element({value:'model-a',dataset:{singleEvaluationField:'model'}});
   const defense=element({value:'both',checked:true});
   queryLists['[data-single-evaluation-field]']=[model];
   queryLists['input[name="single-evaluation-defense"]']=[defense];
   Object.assign(a.state,{route:'single-evaluation',connection:'ready',models:[{id:'model-a'}]});
-  a.bindPage();model.listeners.change({target:model});defense.listeners.change({target:defense});
-  assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'model-a',defense:'both'});
+  a.bindPage();model.listeners.change({target:model});defense.listeners.change?.({target:defense});
+  assert.deepEqual(plain(a.state.singleEvaluationDraft),{model:'model-a',defense:'off'});
   assert.deepEqual(plain(a.state.comparisonDraft),{models:['',''],defense:'off'});
   assert.match(elements['#single-evaluation-summary'].innerHTML,/model-a/);
-  defense.checked=false;defense.value='filter';defense.listeners.change({target:defense});
-  assert.equal(a.state.singleEvaluationDraft.defense,'both');
+  defense.checked=false;defense.value='filter';defense.listeners.change?.({target:defense});
+  assert.equal(a.state.singleEvaluationDraft.defense,'off');
   assert.equal(calls.length,0);
 });
 
-test('single evaluation escapes model labels and uses actual loaded review counts',()=>{
+test('single evaluation escapes model labels and does not treat local examples as an evaluation dataset',()=>{
   const {api:a}=app();
   const model='<img src=x onerror=alert(1)>';
   a.state.models=[{id:model}];a.updateSingleEvaluationDraft('model',model);
   a.state.normal=[{...seeds.normalSeeds[0],id:'pending',provenance:'user',reviewStatus:'pending'}];
   const html=a.pages['single-evaluation']();
   assert.doesNotMatch(html,/<img/);assert.match(html,/&lt;img/);
-  assert.match(html,/<dt>정상 라벨 검토 완료<\/dt><dd>0건<\/dd>/);
-  assert.match(html,/<dt>검토 대기<\/dt><dd>1건<\/dd>/);
+  assert.match(openingTag(html,'button','single-evaluation-run'),/\bdisabled\b/);
+  assert.doesNotMatch(html,/평가 실행 · 준비 중/);
 });
 
 test('add and remove actions refresh model controls without rerendering the page',()=>{

@@ -394,21 +394,55 @@ class Database:
             credential_alias='server-key-1',status='sent',request_snapshot={'model':model,'messages':snapshot['messages'],'max_tokens':config['maxTokens'],'stream':False},
             started_at=datetime.now(timezone.utc)))
 
+    def performance_dataset(self):
+        from backend.performance import dataset
+        return dataset(self)
+
+    def enqueue_performance(self,data,config):
+        from backend.performance import enqueue
+        return enqueue(self,data,config)
+
+    def performance_list(self):
+        from backend.performance import listing
+        return listing(self)
+
+    def performance_detail(self,eid):
+        from backend.performance import detail
+        return detail(self,eid)
+
+    def performance_cases(self,eid,offset,limit):
+        from backend.performance import cases
+        return cases(self,eid,offset,limit)
+
+    def cancel_performance(self,eid):
+        from backend.performance import cancel
+        return cancel(self,eid)
+
     def claim_next(self,config):
         with self.connect() as conn:
+            # One durable queued call at a time across workers. Immediate ad-hoc
+            # summaries retain their existing separate execution path.
+            conn.execute('SELECT pg_advisory_xact_lock(20261109,1)')
             expired=conn.execute("UPDATE runs SET status='timed_out',error_code='WORKER_INTERRUPTED',error_message='실행 중 서버가 중단되어 실제 사용량을 확인할 수 없습니다.',completed_at=now(),call_log_complete=true WHERE status='running' AND lease_expires_at<now() RETURNING id").fetchall()
             for row in expired:
                 conn.execute("UPDATE llm_calls SET status='timed_out',error_code='WORKER_INTERRUPTED',completed_at=now() WHERE run_id=%s AND status='sent'",(row['id'],))
+                case=conn.execute('SELECT c.* FROM experiment_cases c JOIN runs r ON r.experiment_case_id=c.id WHERE r.id=%s',(row['id'],)).fetchone()
+                if 'performance' in case['input_snapshot']:
+                    from backend.performance import stop_after_failure
+                    stop_after_failure(conn,case,'timed_out',{'error':{'code':'WORKER_INTERRUPTED'}})
             self._refresh_status(conn)
-            row=conn.execute('''SELECT r.id FROM runs r
+            if conn.execute("SELECT id FROM runs WHERE status='running' LIMIT 1").fetchone():
+                return None
+            row=conn.execute('''SELECT r.id,c.experiment_id FROM runs r
                 JOIN experiment_cases c ON c.id=r.experiment_case_id
                 JOIN experiments e ON e.id=c.experiment_id
                 WHERE r.status='queued'
-                ORDER BY e.created_at,e.id,c.case_number,c.repeat_index,r.id
+                ORDER BY e.last_dispatched_at NULLS FIRST,e.created_at,e.id,c.case_number,c.repeat_index,r.id
                 FOR UPDATE OF r SKIP LOCKED LIMIT 1''').fetchone()
             if not row:
                 return None
             rid=str(row['id'])
+            conn.execute('UPDATE experiments SET last_dispatched_at=now() WHERE id=%s',(row['experiment_id'],))
             conn.execute("UPDATE runs SET status='running',started_at=now(),lease_expires_at=now()+interval '180 seconds',queue_wait_ms=GREATEST(0,(EXTRACT(EPOCH FROM now()-created_at)*1000)::bigint) WHERE id=%s",(rid,))
             c=conn.execute('SELECT c.* FROM experiment_cases c JOIN runs r ON r.experiment_case_id=c.id WHERE r.id=%s',(rid,)).fetchone()
             self._call(conn,rid,c['requested_model'],c['input_snapshot'],{'maxTokens':c['inference_settings']['max_tokens']})
@@ -430,6 +464,11 @@ class Database:
                 (status,payload.get('summary'),payload.get('model'),payload.get('requestId'),payload.get('finishReason'),
                  usage.get('inputTokens'),usage.get('outputTokens'),usage.get('totalTokens'),usage.get('reasoningTokens'),payload.get('latencyMs'),error.get('code'),Jsonb(payload.get('usageRaw')) if isinstance(payload.get('usageRaw'),dict) else None,payload.get('upstreamStatus'),rid))
             c=conn.execute('SELECT c.* FROM experiment_cases c JOIN runs r ON r.experiment_case_id=c.id WHERE r.id=%s',(rid,)).fetchone()
+            if 'performance' in c['input_snapshot']:
+                from backend.performance import score_result,stop_after_failure
+                if status=='succeeded':
+                    score_result(conn,c,rid,payload.get('summary'))
+                stop_after_failure(conn,c,status,payload)
             criterion=c['input_snapshot'].get('successCriterion')
             if status=='succeeded' and c['expected_label']=='attack' and criterion:
                 evaluation = evaluate_attack(criterion, payload.get('summary'), c['system_prompt'], c['input_snapshot'])
@@ -443,7 +482,8 @@ class Database:
         conn.execute('''UPDATE experiments e SET status=s.next_status,completed_at=CASE WHEN s.pending=0 THEN now() ELSE NULL END FROM
             (SELECT c.experiment_id, count(*) FILTER(WHERE r.status IN ('queued','running')) pending,
              CASE WHEN bool_or(r.status='running') THEN 'running' WHEN bool_or(r.status='queued') THEN 'queued'
-             WHEN bool_and(r.status='succeeded') THEN 'completed' WHEN bool_or(r.status='succeeded') THEN 'partial' ELSE 'failed' END next_status
+             WHEN bool_and(r.status='succeeded') THEN 'completed' WHEN bool_and(r.status='cancelled') THEN 'cancelled'
+             WHEN bool_or(r.status='succeeded') THEN 'partial' ELSE 'failed' END next_status
              FROM runs r JOIN experiment_cases c ON c.id=r.experiment_case_id GROUP BY c.experiment_id) s
              WHERE e.id=s.experiment_id AND e.status IN ('queued','running')''')
 

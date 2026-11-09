@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY backend/ ./backend/
 COPY config/ ./config/
 COPY database/ ./database/
+COPY datasets/ground_truth_set/v1/ ./datasets/ground_truth_set/v1/
 COPY public/ ./public/
 USER fincode
 

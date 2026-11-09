@@ -118,92 +118,206 @@ function emailPage(){return head('EMAIL SUMMARIZER','이메일 요약기','이�
  `<div class="two-col"><section class="panel"><div class="panel-head"><h2>이메일 입력</h2>${tag('본문 요약 · 실제 API','blue')}</div><div class="body-pad" style="padding-top:5px"><fieldset class="email-controls" ${state.running?'disabled':''}><div class="field-row"><div class="field"><label for="live-model">실제 호출 모델</label><select id="live-model" ${state.connection!=='ready'?'disabled':''}>${liveModelOptions()}</select><div class="hint">BAZE에서 조회한 모델 · 과거 실험 표기와 별도</div></div><div class="field"><label for="sample">정상 이메일 예시</label><div style="display:flex;gap:6px"><select id="sample">${state.normal.map(n=>`<option value="${esc(n.id)}" ${state.selectedSample===n.id?'selected':''}>${esc(n.title)}</option>`).join('')}</select><button class="btn" data-action="load-sample" ${state.running?'disabled':''}>불러오기</button></div><div class="hint">합성 예시 또는 직접 등록한 기준 데이터</div></div></div><div class="field"><label for="email-title">제목</label><input id="email-title" maxlength="200" placeholder="이메일 제목을 입력하세요" value="${esc(state.emailTitle)}"></div><div class="field"><div class="wide-label"><label class="field-label" for="email-body">이메일 본문</label><span id="char-count" class="muted small">${state.email.length.toLocaleString()}자</span></div><textarea class="email-text" id="email-body" maxlength="30000" placeholder="요약할 이메일을 붙여넣거나, 위에서 정상 이메일 예시를 불러오세요.">${esc(state.email)}</textarea></div><div class="field"><span class="field-label">첨부파일 · 추출 기능 준비 중</span><label class="upload" id="dropzone" tabindex="${state.running?'-1':'0'}" role="button" aria-disabled="${state.running}" aria-label="첨부파일 선택">${icon('upload')}<strong>파일을 놓거나 클릭하여 선택하세요</strong><small>PDF · PPT(X) · DOC(X) · HWP(X) · PNG · JPEG / 파일당 10MB</small><input id="files" type="file" multiple accept=".pdf,.ppt,.pptx,.doc,.docx,.hwp,.hwpx,.png,.jpg,.jpeg"></label><div class="hint">현재는 파일명만 표시해요. 첨부파일이 있으면 실제 요약을 실행할 수 없어요.</div><div class="file-list">${fileList()}</div></div><div class="actions email-submit"><button class="btn" data-action="clear-email" ${state.running?'disabled':''}>입력 초기화</button><button class="btn" data-action="demo-summary" ${state.running?'disabled':''}>기준 요약 보기</button><button class="btn primary" id="summarize-button" data-action="live-summary" ${canSummarize()?'':'disabled'}>${icon('mail')}${state.running?'요약 생성 중…':'실제 요약 실행'}</button></div></fieldset>${state.files.length?'<p class="local-note">본문만 요약하려면 첨부파일을 모두 제거해 주세요.</p>':''}<p class="local-note">실행 결과는 이 탭에서만 보관해요. 기록을 남기려면 결과 JSON을 내려받아 주세요.</p></div></section>
  <section class="panel" id="summary-panel" aria-live="polite" aria-busy="${state.running}">${summaryPanel()}</section></div>`;}
 const comparisonDefenses=[
-  {id:'off',name:'방어 미적용',description:'방어 없이 기준 성능을 측정할 조건이에요.'},
-  {id:'filter',name:'입력 탐지',description:'입력 탐지를 적용했을 때의 변화 · 구현 예정'},
-  {id:'separate',name:'명령·데이터 분리',description:'지시와 이메일을 분리했을 때의 변화 · 구현 예정'},
-  {id:'both',name:'두 기법 조합',description:'입력 탐지와 명령·데이터 분리 동시 적용 · 구현 예정'},
+  {id:'off',name:'방어 미적용',description:'현재 평가의 기준 조건'},
+  {id:'filter',name:'입력 탐지',description:'최종 단계에서 구현 예정'},
+  {id:'separate',name:'명령·데이터 분리',description:'최종 단계에서 구현 예정'},
+  {id:'both',name:'두 기법 조합',description:'최종 단계에서 구현 예정'},
 ];
+const performanceModes=['single','comparison'];
+const performanceStoreKey=STORAGE+'-performance-v1';
+const performanceUuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function restoredPerformanceState(){try{const value=JSON.parse(localStorage.getItem(performanceStoreKey)||'{}');return value&&typeof value==='object'?value:{};}catch{return {};}}
+const restoredPerformance=restoredPerformanceState();
+function newPerformanceView(mode){
+  const restored=restoredPerformance[mode]||{},pending=restored.pendingSubmission;
+  const validPending=pending&&performanceUuid.test(pending.idempotencyKey)&&pending.datasetId==='ground_truth_set/v1'&&pending.defense==='off'&&typeof pending.name==='string'&&pending.name.length<=200&&Array.isArray(pending.models)&&pending.models.length>=(mode==='single'?1:2)&&pending.models.length<=(mode==='single'?1:5)&&new Set(pending.models).size===pending.models.length&&pending.models.every(id=>typeof id==='string'&&id.length<=200)&&Array.isArray(pending.emailIds)&&pending.emailIds.length>=1&&pending.emailIds.length<=100&&new Set(pending.emailIds).size===pending.emailIds.length&&pending.emailIds.every(id=>performanceUuid.test(id));
+  return {size:validPending&&[5,10,100].includes(pending.emailIds.length)?pending.emailIds.length:100,name:validPending?pending.name:'',selectedId:performanceUuid.test(restored.selectedId)?restored.selectedId:'',summary:null,cases:[],offset:0,casesTotal:0,loading:false,casesLoading:false,error:'',caseError:'',submitting:false,cancelling:false,pendingSubmission:validPending?pending:null,requestVersion:0,caseVersion:0};
+}
+state.performance={dataset:null,datasetLoading:false,datasetError:'',history:[],historyLoading:false,historyError:'',loaded:false,storageWarning:false,views:{single:newPerformanceView('single'),comparison:newPerformanceView('comparison')}};
+if(state.performance.views.single.pendingSubmission)state.singleEvaluationDraft.model=state.performance.views.single.pendingSubmission.models[0];
+if(state.performance.views.comparison.pendingSubmission)state.comparisonDraft.models=[...state.performance.views.comparison.pendingSubmission.models];
+let performancePollTimer=null;
+function performanceMode(){return state.route==='single-evaluation'?'single':state.route==='comparison'?'comparison':null;}
+function performanceView(mode){return state.performance.views[mode];}
+function performanceDraftLocked(mode){const view=performanceView(mode);return view.submitting||Boolean(view.pendingSubmission);}
+function performanceModels(mode){return mode==='single'?[state.singleEvaluationDraft.model]:[...state.comparisonDraft.models];}
+function performanceNumber(value,digits=0){return typeof value==='number'&&Number.isFinite(value)?value.toLocaleString('ko-KR',{maximumFractionDigits:digits}):'—';}
+function performancePercent(value){return typeof value==='number'&&Number.isFinite(value)?(value*100).toFixed(1)+'%':'—';}
+function performanceStatus(status){return ({queued:'대기',running:'실행 중',completed:'완료',partial:'일부 완료',failed:'실패',cancelled:'중단',succeeded:'완료',timed_out:'시간 초과',blocked:'차단'}[status]||'상태 확인 필요');}
+function performanceActive(summary){return summary&&['queued','running'].includes(summary.status);}
+function persistPerformanceSelection(){try{localStorage.setItem(performanceStoreKey,JSON.stringify(Object.fromEntries(performanceModes.map(mode=>[mode,{selectedId:performanceView(mode).selectedId,pendingSubmission:performanceView(mode).pendingSubmission}]))));}catch{state.performance.storageWarning=true;}}
 function comparisonModelOptions(selected){return '<option value="">모델을 선택하세요</option>'+state.models.map(m=>`<option value="${esc(m.id)}" ${selected===m.id?'selected':''}>${esc(m.id)}</option>`).join('');}
 function evaluationModelLabel(id){return state.models.some(m=>m.id===id)?id:'선택 전';}
 function comparisonModelFields(){
-  const models=state.comparisonDraft.models;
-  return `<div class="comparison-model-list">${models.map((model,index)=>`<div class="field comparison-model-slot"><div class="comparison-model-heading"><label for="comparison-model-${index}">모델 ${index+1}</label>${index>=2?`<button type="button" class="btn text comparison-remove-model" data-action="comparison-remove-model" data-index="${index}" aria-label="모델 ${index+1} 삭제">삭제</button>`:'<span class="comparison-required">기본 모델</span>'}</div><select id="comparison-model-${index}" data-comparison-index="${index}" ${state.connection==='ready'?'':'disabled'}>${comparisonModelOptions(model)}</select></div>`).join('')}</div><div class="comparison-model-toolbar"><button type="button" id="comparison-add-model" class="btn" data-action="comparison-add-model" ${models.length>=5?'disabled':''}>+ 모델 추가</button><span role="status">${models.length} / 5개 · 기본 2개, 최대 5개</span></div>`;
+  const models=state.comparisonDraft.models,locked=performanceDraftLocked('comparison');
+  return `<div class="comparison-model-list">${models.map((model,index)=>`<div class="field comparison-model-slot"><div class="comparison-model-heading"><label for="comparison-model-${index}">모델 ${index+1}</label>${index>=2?`<button type="button" class="btn text comparison-remove-model" data-action="comparison-remove-model" data-index="${index}" aria-label="모델 ${index+1} 삭제" ${locked?'disabled':''}>삭제</button>`:'<span class="comparison-required">기본 모델</span>'}</div><select id="comparison-model-${index}" data-comparison-index="${index}" ${state.connection==='ready'&&!locked?'':'disabled'}>${comparisonModelOptions(model)}</select></div>`).join('')}</div><div class="comparison-model-toolbar"><button type="button" id="comparison-add-model" class="btn" data-action="comparison-add-model" ${models.length>=5||locked?'disabled':''}>+ 모델 추가</button><span role="status">${models.length} / 5개 · 기본 2개, 최대 5개</span></div>`;
 }
-function comparisonSummary(){
-  const draft=state.comparisonDraft,defense=comparisonDefenses.find(d=>d.id===draft.defense)||comparisonDefenses[0];
-  return `<div class="panel-head"><h2>비교 조건</h2>${tag('설정 초안','amber')}</div><div class="panel-body"><dl class="comparison-details">${draft.models.map((model,index)=>`<div><dt>모델 ${index+1}</dt><dd>${esc(evaluationModelLabel(model))}</dd></div>`).join('')}<div><dt>기준 조건</dt><dd>방어 미적용 · OFF</dd></div><div><dt>추가 비교 조건</dt><dd>${draft.defense==='off'?'없음 · 모델 간 비교':esc(defense.name)+' · 구현 예정'}</dd></div></dl><p class="comparison-hint">동일한 정상 이메일로 선택한 모델을 비교할 조건이에요. 한 모델의 방어 전후 조건은 <a href="#single-evaluation">단일 모델 성능 평가</a>에서도 준비할 수 있어요.</p><button type="button" id="comparison-run" class="btn primary comparison-run" disabled>비교 실행 · 준비 중</button><p class="comparison-hint">현재는 설정만 가능해요. 자동 채점과 비교 실행은 추후 제공돼요.</p></div>`;
+function selectedPerformanceEmails(mode){
+  const items=state.performance.dataset?.items;if(!Array.isArray(items))return [];
+  const size=performanceView(mode).size;
+  // Stable, category-spread samples of the original five groups of twenty emails.
+  const numbers=size===100?Array.from({length:100},(_,i)=>i+1):Array.from({length:size},(_,i)=>(i%5)*20+Math.floor(i/5)+1);
+  const bySource=new Map(items.map(item=>[item.sourceId,item]));
+  return numbers.map(n=>bySource.get('GT-SYN-'+String(n).padStart(3,'0'))).filter(Boolean);
 }
+function performanceValidation(mode){
+  const view=performanceView(mode),models=performanceModels(mode),rows=selectedPerformanceEmails(mode);
+  if(!state.dbReady)return 'DB 연결을 확인해 주세요.';
+  if(state.connection!=='ready')return '제공 모델 목록의 연결을 확인해 주세요.';
+  if(!state.performance.dataset)return state.performance.datasetLoading?'평가 데이터를 불러오는 중이에요.':'평가 데이터를 먼저 불러와 주세요.';
+  if(models.length<(mode==='single'?1:2)||models.length>(mode==='single'?1:5)||models.some(id=>!state.models.some(m=>m.id===id)))return '평가할 모델을 모두 선택해 주세요.';
+  if(new Set(models).size!==models.length)return '서로 다른 모델을 선택해 주세요.';
+  if(rows.length!==view.size)return '선택한 평가 데이터가 모두 준비되지 않았어요. 데이터를 확인해 주세요.';
+  if(rows.some(row=>row.reviewStatus!=='reviewed'||!row.groundTruthId||!['draft','reviewed'].includes(row.referenceReviewStatus)))return '정상 라벨 검토가 완료되고 기준 요약이 있는 데이터가 필요해요.';
+  return '';
+}
+function performanceSummary(mode){
+  const view=performanceView(mode),single=mode==='single',pending=view.pendingSubmission;
+  const models=pending?.models||performanceModels(mode),count=pending?.emailIds.length||selectedPerformanceEmails(mode).length,problem=performanceValidation(mode);
+  return `<div class="panel-head"><h2>${single?'평가':'비교'} 조건</h2>${tag('방어 OFF','blue')}</div><div class="panel-body"><dl class="comparison-details">${models.map((model,index)=>`<div><dt>${single?'평가 모델':'모델 '+(index+1)}</dt><dd>${esc(pending?model:evaluationModelLabel(model))}</dd></div>`).join('')}<div><dt>정상 이메일</dt><dd>${count}건</dd></div><div><dt>예정 모델 호출</dt><dd>${count*models.length}회 · 이메일당 1회</dd></div></dl><p class="comparison-hint">이메일 원문만 모델에 보내고, 기준 요약과 핵심 정보는 응답을 받은 뒤 채점에 사용해요.</p>${pending?'<p class="performance-warning">요청 결과를 확인해야 해요. 아래 버튼은 같은 요청을 다시 확인하며 새 평가를 추가하지 않아요.</p>':''}${problem&&!pending?`<p class="comparison-hint">${esc(problem)}</p>`:''}<button type="button" id="${single?'single-evaluation':'comparison'}-run" class="btn primary comparison-run" data-action="performance-run" data-mode="${mode}" ${view.submitting||(!pending&&problem)||pending&&!state.dbReady?'disabled':''}>${view.submitting?'요청 확인 중…':pending?'동일 요청 상태 확인':single?'평가 실행':'비교 실행'}</button>${view.error?`<p class="performance-error" role="alert">${esc(view.error)}</p>`:''}${state.performance.storageWarning?'<p class="performance-warning">브라우저 저장소를 사용할 수 없어 요청 확인 상태는 이 화면에서만 유지돼요.</p>':''}</div>`;
+}
+function comparisonSummary(){return performanceSummary('comparison');}
+function singleEvaluationSummary(){return performanceSummary('single');}
 function refreshComparisonSummary(){const panel=$('#comparison-summary');if(panel)panel.innerHTML=comparisonSummary();}
-function bindComparisonModelControls(){
-  $$('[data-comparison-index]').forEach(el=>el.addEventListener('change',e=>updateComparisonDraft(Number(el.dataset.comparisonIndex),e.target.value)));
-}
+function bindComparisonModelControls(){$$('[data-comparison-index]').forEach(el=>el.addEventListener('change',e=>updateComparisonDraft(Number(el.dataset.comparisonIndex),e.target.value)));}
 function refreshComparisonModels(focusIndex){
-  const fields=$('#comparison-model-fields');
-  if(fields){
-    fields.innerHTML=comparisonModelFields();
-    bindComparisonModelControls();
-    const select=$('#comparison-model-'+focusIndex);
-    const focusTarget=select&&!select.disabled?select:$('[data-action="comparison-remove-model"][data-index="'+focusIndex+'"]')||$('#comparison-add-model');
-    focusTarget?.focus?.();
-  }
-  refreshComparisonSummary();
+  const fields=$('#comparison-model-fields');if(fields){fields.innerHTML=comparisonModelFields();bindComparisonModelControls();const select=$('#comparison-model-'+focusIndex);const target=select&&!select.disabled?select:$('[data-action="comparison-remove-model"][data-index="'+focusIndex+'"]')||$('#comparison-add-model');if(Number.isInteger(focusIndex))target?.focus?.();}refreshComparisonSummary();
 }
 function updateComparisonDraft(field,value){
-  if(field==='defense'){
-    if(!comparisonDefenses.some(d=>d.id===value))return;
-    state.comparisonDraft.defense=value;
-  }else{
-    if(!Number.isInteger(field)||field<0||field>=state.comparisonDraft.models.length)return;
-    if(value!==''&&!state.models.some(m=>m.id===value))return;
-    state.comparisonDraft.models[field]=value;
-  }
-  refreshComparisonSummary();
+  if(performanceDraftLocked('comparison'))return;
+  if(field==='defense'){if(value!=='off')return;state.comparisonDraft.defense='off';}
+  else{if(!Number.isInteger(field)||field<0||field>=state.comparisonDraft.models.length||value!==''&&!state.models.some(m=>m.id===value))return;state.comparisonDraft.models[field]=value;}refreshComparisonSummary();
 }
-function addComparisonModel(){
-  if(state.comparisonDraft.models.length>=5)return;
-  state.comparisonDraft.models.push('');
-  refreshComparisonModels(state.comparisonDraft.models.length-1);
-}
-function removeComparisonModel(index){
-  if(!Number.isInteger(index)||index<2||index>=state.comparisonDraft.models.length)return;
-  state.comparisonDraft.models.splice(index,1);
-  refreshComparisonModels(Math.min(index,state.comparisonDraft.models.length-1));
-}
-function singleEvaluationSummary(){
-  const draft=state.singleEvaluationDraft,defense=comparisonDefenses.find(d=>d.id===draft.defense)||comparisonDefenses[0];
-  return `<div class="panel-head"><h2>평가 조건</h2>${tag('설정 초안','amber')}</div><div class="panel-body"><dl class="comparison-details"><div><dt>평가 모델</dt><dd>${esc(evaluationModelLabel(draft.model))}</dd></div><div><dt>기준 조건</dt><dd>방어 미적용 · OFF</dd></div><div><dt>추가 평가 조건</dt><dd>${draft.defense==='off'?'없음 · 방어 미적용':esc(defense.name)+' · 구현 예정'}</dd></div></dl><p class="comparison-hint">선택한 한 모델에 같은 정상 이메일을 적용해 요약 품질과 방어 전후의 변화를 평가할 조건이에요.</p><button type="button" id="single-evaluation-run" class="btn primary comparison-run" disabled>평가 실행 · 준비 중</button><p class="comparison-hint">현재는 설정만 가능해요. 자동 채점과 평가 실행은 추후 제공돼요.</p></div>`;
-}
+function addComparisonModel(){if(performanceDraftLocked('comparison')||state.comparisonDraft.models.length>=5)return;state.comparisonDraft.models.push('');refreshComparisonModels(state.comparisonDraft.models.length-1);}
+function removeComparisonModel(index){if(performanceDraftLocked('comparison')||!Number.isInteger(index)||index<2||index>=state.comparisonDraft.models.length)return;state.comparisonDraft.models.splice(index,1);refreshComparisonModels(Math.min(index,state.comparisonDraft.models.length-1));}
 function updateSingleEvaluationDraft(field,value){
-  if(field==='defense'){
-    if(!comparisonDefenses.some(d=>d.id===value))return;
-  }else if(field==='model'){
-    if(value!==''&&!state.models.some(m=>m.id===value))return;
-  }else return;
-  state.singleEvaluationDraft[field]=value;
-  const panel=$('#single-evaluation-summary');if(panel)panel.innerHTML=singleEvaluationSummary();
+  if(performanceDraftLocked('single'))return;
+  if(field==='defense'){if(value!=='off')return;}
+  else if(field==='model'){if(value!==''&&!state.models.some(m=>m.id===value))return;}else return;
+  state.singleEvaluationDraft[field]=value;const panel=$('#single-evaluation-summary');if(panel)panel.innerHTML=singleEvaluationSummary();
 }
-function evaluationDefensePanel(name,selected,single=false){
-  return `<section class="panel"><div class="panel-head"><div><h2>방어 적용 설정</h2><p>방어 미적용을 기준으로 성능 변화와 정상 이메일 오차단을 비교해요.</p></div>${tag('방어 구현 예정','amber')}</div><div class="panel-body"><div class="comparison-baseline">${icon('shield')}<div><strong>기준 조건 · 방어 OFF</strong><span>모든 ${single?'평가':'비교'}에 방어 미적용 조건을 포함해요.</span></div>${tag('항상 포함','blue')}</div><fieldset class="comparison-defense"><legend>추가 ${single?'평가':'비교'}할 방어 기법</legend>${comparisonDefenses.map(d=>`<label class="comparison-defense-option"><input type="radio" name="${esc(name)}" value="${d.id}" ${selected===d.id?'checked':''}><span><strong>${esc(d.name)}</strong><small>${esc(d.description)}</small></span></label>`).join('')}</fieldset><p class="comparison-hint">선택한 방어 기법은 ${single?'평가':'비교'} 조건 초안이에요. 이메일 요약기나 공격 실험의 실행 설정을 바꾸지 않아요.</p></div></section>`;
+function evaluationDefensePanel(name){return `<section class="panel"><div class="panel-head"><div><h2>방어 적용 설정</h2><p>이번 평가는 방어 미적용 기준으로 실행해요.</p></div>${tag('방어 구현 예정','amber')}</div><div class="panel-body"><fieldset class="comparison-defense"><legend>방어 조건</legend>${comparisonDefenses.map(d=>`<label class="comparison-defense-option ${d.id==='off'?'':'unavailable'}"><input type="radio" name="${esc(name)}" value="${d.id}" ${d.id==='off'?'checked':'disabled'}><span><strong>${esc(d.name)}</strong><small>${esc(d.description)}</small></span></label>`).join('')}</fieldset><p class="comparison-hint">방어 전후 성능 변화와 방어 오차단률은 방어 기능 구현 후 제공돼요.</p></div></section>`;}
+function performanceDatasetPanel(mode){
+  const p=state.performance,d=p.dataset,view=performanceView(mode),locked=performanceDraftLocked(mode);
+  return `<section class="panel" id="performance-dataset"><div class="panel-head"><div><h2>평가 데이터</h2><p>합성 정상 이메일 100건 · 기존 예시 5건 제외</p></div><button class="btn text" data-action="performance-refresh" ${p.datasetLoading?'disabled':''}>새로고침</button></div><div class="panel-body">${p.datasetLoading?'<p class="comparison-hint" role="status">평가 데이터를 확인하고 있어요.</p>':''}${p.datasetError?`<p class="performance-error" role="alert">${esc(p.datasetError)}</p>`:''}${d?`<dl class="comparison-details"><div><dt>사용 가능한 이메일</dt><dd>${performanceNumber(d.available)} / ${performanceNumber(d.total)}건</dd></div><div><dt>정상 라벨 검토 완료</dt><dd>${performanceNumber(d.reviewedLabels)}건</dd></div><div><dt>기준 요약 검토 완료</dt><dd>${performanceNumber(d.reviewedReferences)}건</dd></div></dl>`:'<p class="comparison-hint">DB에서 평가용 데이터셋을 확인한 뒤 실행할 수 있어요.</p>'}<div class="field performance-size-field"><label for="performance-size">평가 범위</label><select id="performance-size" data-performance-size="${mode}" ${locked?'disabled':''}>${[[5,'5건 시험 · 유형별 1건'],[10,'10건 시험 · 유형별 2건'],[100,'전체 100건']].map(([n,label])=>`<option value="${n}" ${view.size===n?'selected':''}>${label}</option>`).join('')}</select></div><div class="field"><label for="performance-name">평가 이름 <span class="muted">(선택)</span></label><input id="performance-name" data-performance-name="${mode}" maxlength="200" value="${esc(view.name)}" placeholder="예: 정상 이메일 기준 성능 평가" ${locked?'disabled':''}></div><p class="comparison-hint">기준 요약이 검토 대기 상태인 이메일을 포함하면 ‘초안 기준 예비 평가’로 표시해요.</p><a class="btn text" href="#data">데이터 관리 ${icon('arrow')}</a></div></section>`;
 }
-function evaluationDataPanel(){
-  const samples=state.normal.filter(n=>n.provenance==='sample').length;
-  const pending=state.normal.filter(n=>n.provenance!=='sample'&&n.reviewStatus!=='reviewed').length;
-  const source=state.dbReady?'DB 정상 이메일':state.dbConfigured?'DB 연결 확인 필요':'브라우저 정상 이메일';
-  return `<section class="panel"><div class="panel-head"><h2>정상 이메일 데이터</h2>${tag(state.dbReady?'DB 연결':'연결 상태 확인',state.dbReady?'green':'amber')}</div><div class="panel-body"><div class="comparison-data-count"><strong>${state.normal.length}</strong><span>건 · ${source}</span></div><dl class="comparison-details"><div><dt>정상 라벨 검토 완료</dt><dd>${gtCount()}건</dd></div><div><dt>검토 대기</dt><dd>${pending}건</dd></div><div><dt>기존 합성 예시</dt><dd>${samples}건</dd></div></dl><p class="comparison-hint">정상 라벨 검토와 기준 요약 검수는 별개예요. 실제 평가 전 기준 정답을 확인해 주세요.</p><a class="btn text" href="#data">데이터 관리 ${icon('arrow')}</a></div></section>`;
+function evaluationMetricsPanel(){return `<section class="panel section-space"><div class="panel-head"><h2>지표 읽는 법</h2></div><div class="comparison-metrics">${[['기준 요약 유사도','주 채점 · 문자 기준 ROUGE-L · 사실 정확도와 별개'],['핵심 정보 자동 확인률 · 보수적 규칙','보조 진단 · 미확인은 오답이 아니며 모델 순위 지표로 사용하지 않음'],['응답시간','모델 응답까지의 시간 · 대기·채점시간 제외'],['토큰 사용량','제공 모델이 보고한 입력·출력·전체 토큰']].map(([name,text])=>`<div><strong>${name}</strong><span>${text}</span></div>`).join('')}</div></section>`;}
+function performanceHistory(mode){
+  const p=state.performance,view=performanceView(mode),rows=p.history.filter(row=>Array.isArray(row.models)&&(mode==='single'?row.models.length===1:row.models.length>=2));
+  return `<section class="panel section-space" id="performance-history"><div class="panel-head"><h2>저장된 ${mode==='single'?'평가':'비교'} 기록</h2><button class="btn text" data-action="performance-refresh" ${p.historyLoading?'disabled':''}>새로고침</button></div><div class="panel-body">${p.historyError?`<p class="performance-error" role="alert">${esc(p.historyError)}</p>`:p.historyLoading?'<p role="status" class="comparison-hint">저장된 기록을 불러오는 중이에요.</p>':''}<div class="performance-history-list">${rows.map(row=>`<button type="button" class="performance-history-item ${view.selectedId===row.id?'selected':''}" data-action="performance-open" data-mode="${mode}" data-id="${esc(row.id)}" aria-pressed="${view.selectedId===row.id}"><span><strong>${esc(row.name)}</strong><small>${esc(row.createdAt||'')} · ${row.models.length}개 모델</small></span><span>${tag(performanceStatus(row.status),row.status==='completed'?'green':'')}${performanceNumber(row.finished)} / ${performanceNumber(row.total)}건</span></button>`).join('')||(!p.historyLoading&&!p.historyError?'<p class="comparison-hint">저장된 기록이 없어요. 실행한 평가는 이곳에서 다시 확인할 수 있어요.</p>':'')}</div></div></section>`;
 }
-function evaluationMetricsPanel(single=false){
-  return `<section class="panel section-space"><div class="panel-head"><div><h2>${single?'평가':'비교'}할 항목</h2><p>같은 정상 이메일과 조건으로 측정할 항목이에요.</p></div>${tag('결과 없음')}</div><div class="comparison-metrics">${[['요약 품질','기준 요약·핵심 정보 보존'],['정상 이메일 오차단','방어로 차단된 정상 입력'],['응답시간','방어 전후 처리 시간 변화'],['토큰 사용량','입력·출력·전체 토큰 변화']].map(([name,description])=>`<div><strong>${name}</strong><span>${description}</span><small>측정 기능 준비 중</small></div>`).join('')}</div></section>`;
+function performanceModelTable(summary){
+  const rows=Array.isArray(summary.modelResults)?summary.modelResults:[];
+  return `<div class="table-wrap performance-table"><table><thead><tr><th>모델</th><th>응답 완료 / 전체</th><th>유사도</th><th>평균 핵심 정보 자동 확인률<small>보수적 규칙 · 보조 진단</small></th><th>응답시간 평균 / 중앙값</th><th>평균 토큰<br>입력 / 출력 / 전체</th><th>실행 오류 / 중단</th></tr></thead><tbody>${rows.map(row=>`<tr><td><strong>${esc(row.model)}</strong></td><td>${performanceNumber(row.succeeded)} / ${performanceNumber(row.total)}</td><td>${performancePercent(row.meanRougeL)}<small>채점 완료 ${performanceNumber(row.gradedCount)}건</small></td><td>${performancePercent(row.meanFactCoverage)}<small>전체 응답에서 ${performanceNumber(row.confirmedFacts)} / ${performanceNumber(row.totalFacts)}개 확인 · ${performanceNumber(row.needsReviewFacts)}개 검토 필요</small></td><td>${performanceNumber(row.latencyMsMean,1)} / ${performanceNumber(row.latencyMsMedian,1)} ms</td><td>${performanceNumber(row.tokens?.inputMean,1)} / ${performanceNumber(row.tokens?.outputMean,1)} / ${performanceNumber(row.tokens?.totalMean,1)}<small>사용량 보고 ${performanceNumber(row.tokens?.reportedCount)}건</small></td><td>${performanceNumber(row.failed)} / ${performanceNumber(row.cancelled)}</td></tr>`).join('')}</tbody></table></div><p class="comparison-hint performance-table-note">지표마다 측정된 응답만 평균에 포함해요. 오류와 누락된 측정값은 0으로 계산하지 않아요. 핵심 정보 미확인은 오답이 아니며 모델 순위 지표로 사용하지 않아요.</p>${summary.models.length>1?`<div class="performance-common"><h3>공통 채점 완료 표본 비교</h3><p>모든 모델의 응답·유사도 채점이 완료된 공통 이메일 ${performanceNumber(summary.commonCompletedEmails)}건만 비교해요.</p><div class="table-wrap"><table><thead><tr><th>모델</th><th>공통 이메일</th><th>유사도</th><th>평균 응답시간</th><th>평균 전체 토큰</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(row.model)}</td><td>${performanceNumber(row.common?.count)}건</td><td>${performancePercent(row.common?.meanRougeL)}</td><td>${performanceNumber(row.common?.latencyMsMean,1)} ms</td><td>${performanceNumber(row.common?.totalTokensMean,1)}</td></tr>`).join('')}</tbody></table></div></div>`:''}`;
 }
-function comparisonPage(){
-  return head('MODEL COMPARISON','모델 별 비교','같은 정상 이메일로 모델 차이와 방어 적용에 따른 성능 변화를 비교할 조건을 준비하세요.')+
-    connectionPanel()+notice('<strong>비교 설정 준비 단계</strong>예요. 모델과 방어 기법을 선택해 둘 수 있지만, 비교 실행·자동 채점·방어 적용은 아직 제공되지 않아요.')+
-    `<div class="comparison-grid"><div class="comparison-main"><section class="panel"><div class="panel-head"><div><h2>비교 모델</h2><p>현재 제공 모델에서 비교할 모델을 2개부터 최대 5개까지 선택하세요.</p></div>${tag('설정만 가능','blue')}</div><div class="panel-body"><div id="comparison-model-fields">${comparisonModelFields()}</div><p class="comparison-hint">단일 모델 성능 평가와 이메일 요약기의 모델 선택과 별도로 유지돼요. 페이지를 새로고침하면 비교 설정은 초기화돼요.</p></div></section>${evaluationDefensePanel('comparison-defense',state.comparisonDraft.defense)}</div><aside class="comparison-side"><section class="panel" id="comparison-summary" aria-live="polite">${comparisonSummary()}</section>${evaluationDataPanel()}</aside></div>${evaluationMetricsPanel()}`;
+function performanceFactReason(reason){return ({complete_clause_exact_match:'요약에서 핵심 정보 문구 전체를 확인했어요.',competing_value_or_polarity:'숫자 또는 긍정·부정 표현이 다른 문구가 있어 검토가 필요해요.',embedded_or_quoted_clause:'인용되거나 다른 문맥에 포함된 표현이라 자동 확인하지 않았어요.',paraphrase_or_relation_needs_review:'관련 표현이 있지만 의미가 같은지 직접 검토해야 해요.',no_exact_clause_observed:'문구 전체가 확인되지 않았어요. 누락 여부는 직접 검토해 주세요.',unsupported_fact:'자동 확인하기 어려운 항목이에요.',evaluation_unavailable:'자동 채점을 완료하지 못했어요.'}[reason]||'자동으로 확정하기 어려워 원문과 응답을 함께 검토해야 해요.');}
+function performanceCaseCard(row){
+  const q=row.quality,facts=Array.isArray(q?.facts)?q.facts:[],warnings=Array.isArray(row.warnings)?[...row.warnings]:[],statusLabel={confirmed:'확인',matched:'문구 확인',missing_candidate:'누락 후보',conflict_candidate:'충돌 후보',review_needed:'검토 필요',needs_review:'검토 필요',indeterminate:'검토 필요'};
+  if(!warnings.length&&row.finishReason==='length')warnings.push('출력 토큰 한도에 도달해 요약이 잘렸을 수 있어요.');
+  if(!warnings.length&&row.finishReason==='content_filter')warnings.push('모델 제공자의 콘텐츠 필터가 응답에 영향을 주었어요.');
+  return `<details class="performance-case" data-performance-case="${esc(row.id)}"><summary><span><strong>${esc(row.sourceId||'이메일')} · ${esc(row.title)}</strong><small>${esc(row.requestedModel)}${row.returnedModel&&row.returnedModel!==row.requestedModel?' → '+esc(row.returnedModel):''}</small></span>${tag(performanceStatus(row.status),row.status==='succeeded'?'green':'')}</summary><div class="performance-case-body">${row.error?`<p class="performance-error">${esc(row.error.message||row.error.code||'실행 오류')}</p>`:''}${warnings.map(warning=>`<p class="performance-warning">${esc(warning)}</p>`).join('')}${q?.decisionStatus==='indeterminate'?`<p class="performance-warning">자동 채점 보류 · ${esc(q.evidence||'모델 출력과 기준 요약을 직접 검토해 주세요.')}</p>`:''}<div class="performance-case-measures"><span>유사도 <b>${performancePercent(q?.score)}</b></span><span>핵심 정보 자동 확인률 <b>${performancePercent(q?.factCoverage)}</b></span><span>응답시간 <b>${performanceNumber(row.latencyMs)} ms</b></span><span>전체 토큰 <b>${performanceNumber(row.usage?.totalTokens)}</b></span></div><div class="performance-text-grid"><section><h4>이메일 원문</h4><pre>${esc(row.body||'')}</pre></section><section><h4>기준 요약 ${row.referenceReviewStatus==='reviewed'?tag('검토 완료','green'):tag('초안','amber')}</h4><pre>${esc(row.reference||'')}</pre></section><section><h4>모델 요약</h4><pre>${esc(row.summary||'응답 없음')}</pre></section></div>${q?`<div class="performance-facts"><h4>핵심 정보 확인 근거</h4><p class="comparison-hint">보수적인 규칙을 사용하는 보조 진단이에요. 미확인은 오답이 아니며 모델 순위 지표로 사용하지 않아요. 원문·응답을 함께 검토해 주세요.</p>${facts.map(f=>`<div class="performance-fact"><strong>${esc(f.fact)}</strong>${tag(statusLabel[f.status]||'검토 필요',f.status==='confirmed'||f.status==='matched'?'green':'amber')}<p>${esc(performanceFactReason(f.reason))}</p>${f.evidence?`<blockquote>${esc(typeof f.evidence==='string'?f.evidence:JSON.stringify(f.evidence))}</blockquote>`:''}</div>`).join('')}<p class="comparison-hint">채점 버전 ${esc(q.version||'—')}</p></div>`:'<p class="comparison-hint">채점 결과가 없어요. 실행 오류는 0점으로 처리하지 않아요.</p>'}</div></details>`;
 }
-function singleEvaluationPage(){
-  return head('SINGLE MODEL EVALUATION','단일 모델 성능 평가','한 모델의 정상 이메일 요약 성능과 방어 적용 전후의 변화를 평가할 조건을 준비하세요.')+
-    connectionPanel()+notice('<strong>평가 설정 준비 단계</strong>예요. 모델과 방어 기법을 선택해 둘 수 있지만, 평가 실행·자동 채점·방어 적용은 아직 제공되지 않아요.')+
-    `<div class="comparison-grid"><div class="comparison-main"><section class="panel"><div class="panel-head"><div><h2>평가 모델</h2><p>현재 제공 모델에서 평가할 모델 한 개를 선택하세요.</p></div>${tag('설정만 가능','blue')}</div><div class="panel-body"><div class="field"><label for="single-evaluation-model">모델</label><select id="single-evaluation-model" data-single-evaluation-field="model" ${state.connection==='ready'?'':'disabled'}>${comparisonModelOptions(state.singleEvaluationDraft.model)}</select></div><p class="comparison-hint">모델 별 비교와 이메일 요약기의 모델 선택과 별도로 유지돼요. 페이지를 새로고침하면 평가 설정은 초기화돼요.</p></div></section>${evaluationDefensePanel('single-evaluation-defense',state.singleEvaluationDraft.defense,true)}</div><aside class="comparison-side"><section class="panel" id="single-evaluation-summary" aria-live="polite">${singleEvaluationSummary()}</section>${evaluationDataPanel()}</aside></div>${evaluationMetricsPanel(true)}`;
+function performanceCases(mode){
+  const view=performanceView(mode),rows=view.cases;
+  return `<div class="performance-cases" id="performance-cases"><div class="panel-head"><div><h3>이메일별 결과</h3><p>항목을 펼치면 원문·기준 요약·모델 응답과 채점 근거를 볼 수 있어요.</p></div><button class="btn text" data-action="performance-cases-refresh" data-mode="${mode}" ${view.casesLoading?'disabled':''}>상세 새로고침</button></div>${view.caseError?`<p class="performance-error" role="alert">${esc(view.caseError)}</p>`:''}${view.casesLoading?'<p class="comparison-hint" role="status">이메일별 결과를 불러오는 중이에요.</p>':''}${rows.map(performanceCaseCard).join('')}${!rows.length&&!view.casesLoading&&!view.caseError?'<p class="comparison-hint">표시할 결과가 없어요.</p>':''}<div class="performance-pagination"><button class="btn" data-action="performance-page" data-mode="${mode}" data-offset="${Math.max(0,view.offset-20)}" ${view.offset===0||view.casesLoading?'disabled':''}>이전</button><span>${view.casesTotal?view.offset+1:0}–${Math.min(view.offset+rows.length,view.casesTotal)} / ${performanceNumber(view.casesTotal)}건</span><button class="btn" data-action="performance-page" data-mode="${mode}" data-offset="${view.offset+20}" ${view.offset+20>=view.casesTotal||view.casesLoading?'disabled':''}>다음</button></div></div>`;
 }
+function refreshPerformanceCasesView(mode){
+  if(performanceMode()!==mode)return;const panel=$('#performance-cases');if(!panel)return;
+  const openIds=new Set($$('#performance-cases details[open]').map(el=>el.dataset.performanceCase));
+  panel.outerHTML=performanceCases(mode);
+  $$('#performance-cases details[data-performance-case]').forEach(el=>{if(openIds.has(el.dataset.performanceCase))el.open=true;});
+}
+function performanceResults(mode){
+  const view=performanceView(mode),s=view.summary;
+  if(!view.selectedId)return `<section class="panel section-space" id="performance-results"><div class="panel-head"><h2>평가 결과</h2></div><div class="panel-body"><p class="comparison-hint">평가를 실행하거나 아래 저장된 기록을 선택해 주세요.</p></div></section>`;
+  if(!s)return `<section class="panel section-space" id="performance-results"><div class="panel-body"><p class="comparison-hint" role="status">${view.loading?'평가 결과를 불러오는 중이에요.':'평가 결과를 불러오지 못했어요.'}</p>${view.error?`<p class="performance-error" role="alert">${esc(view.error)}</p>`:''}<button class="btn" data-action="performance-result-refresh" data-mode="${mode}" ${view.loading?'disabled':''}>다시 확인</button></div></section>`;
+  return `<section class="panel section-space" id="performance-results"><div id="performance-result-summary">${performanceResultSummary(mode)}</div>${performanceCases(mode)}</section>`;
+}
+function performanceResultSummary(mode){
+  const view=performanceView(mode),s=view.summary;
+  if(!s)return '';
+  const ratio=typeof s.total==='number'&&s.total>0?Math.max(0,Math.min(100,s.finished/s.total*100)):0;
+  return `<div class="panel-head"><div><h2>${esc(s.name)}</h2><p>${esc(s.createdAt||'')} · 방어 OFF · ${s.models.length}개 모델</p></div><div class="actions">${tag(performanceStatus(s.status),s.status==='completed'?'green':'blue')}${s.preliminary?tag('초안 기준 예비 평가','amber'):''}<button class="btn text" data-action="performance-result-refresh" data-mode="${mode}" ${view.loading?'disabled':''}>새로고침</button>${performanceActive(s)?`<button class="btn" data-action="performance-cancel" data-mode="${mode}" ${view.cancelling?'disabled':''}>${view.cancelling?'중단 요청 중…':'남은 요청 중단'}</button>`:''}</div></div><div class="panel-body performance-progress-area"><div class="performance-progress-label"><strong>${performanceNumber(s.finished)} / ${performanceNumber(s.total)}건 처리</strong><span>응답 완료 ${performanceNumber(s.succeeded)} · 오류 ${performanceNumber(s.failed)} · 중단 ${performanceNumber(s.cancelled)}</span></div><progress max="100" value="${Number.isFinite(ratio)?ratio:0}" aria-label="평가 진행률"></progress><p class="comparison-hint">대기 ${performanceNumber(s.queued)} · 실행 중 ${performanceNumber(s.running)}${performanceActive(s)?' · 화면을 새로고침해도 서버에서 계속 실행해요. 중단은 아직 전송하지 않은 요청에만 적용돼요.':''}</p>${s.stopReason?`<p class="performance-warning">${esc(s.stopReason)}</p>`:''}${view.cancelling?'<p class="comparison-hint">이미 전송된 요청은 완료 후 결과를 저장해요.</p>':''}${view.error?`<p class="performance-error" role="alert">${esc(view.error)}</p>`:''}</div>${performanceModelTable(s)}`;
+}
+function refreshPerformanceView(mode,{controls=false,dataset=false,history=false}={}){
+  if(performanceMode()!==mode)return;
+  const summary=$(mode==='single'?'#single-evaluation-summary':'#comparison-summary');if(summary)summary.innerHTML=performanceSummary(mode);
+  const data=$('#performance-dataset');if(data&&(dataset||controls)){data.outerHTML=performanceDatasetPanel(mode);bindPerformanceSettings();}
+  const historyPanel=$('#performance-history');if(historyPanel&&history)historyPanel.outerHTML=performanceHistory(mode);
+  const result=$('#performance-results'),resultSummary=$('#performance-result-summary');if(result){if(resultSummary&&performanceView(mode).summary)resultSummary.innerHTML=performanceResultSummary(mode);else result.outerHTML=performanceResults(mode);}
+  if(controls){if(mode==='comparison')refreshComparisonModels();else{const select=$('#single-evaluation-model');if(select)select.disabled=state.connection!=='ready'||performanceDraftLocked(mode);}}
+}
+function performancePage(mode){
+  const single=mode==='single',view=performanceView(mode),locked=performanceDraftLocked(mode);
+  return head(single?'SINGLE MODEL EVALUATION':'MODEL COMPARISON',single?'단일 모델 성능 평가':'모델 별 비교',single?'정상 이메일로 한 모델의 요약 품질·응답시간·토큰 사용량을 측정하세요.':'같은 정상 이메일과 조건으로 최대 5개 모델의 결과를 비교하세요.')+connectionPanel()+notice('기준 요약 유사도와 핵심 정보 확인 결과를 나눠 보여줘요. <strong>방어 OFF</strong>로 실행하며, 방어 적용은 최종 단계에서 제공돼요.')+`<div class="comparison-grid"><div class="comparison-main"><section class="panel"><div class="panel-head"><div><h2>${single?'평가 모델':'비교 모델'}</h2><p>${single?'평가할 모델 한 개를 선택하세요.':'서로 다른 모델을 2개부터 최대 5개까지 선택하세요.'}</p></div>${tag('실제 API 실행','blue')}</div><div class="panel-body">${single?`<div class="field"><label for="single-evaluation-model">모델</label><select id="single-evaluation-model" data-single-evaluation-field="model" ${state.connection==='ready'&&!locked?'':'disabled'}>${comparisonModelOptions(state.singleEvaluationDraft.model)}</select></div>`:`<div id="comparison-model-fields">${comparisonModelFields()}</div>`}<p class="comparison-hint">이메일 요약기와 ${single?'모델 별 비교':'단일 모델 성능 평가'}의 모델 선택과 별도로 유지돼요.</p></div></section>${performanceDatasetPanel(mode)}${evaluationDefensePanel(single?'single-evaluation-defense':'comparison-defense')}</div><aside class="comparison-side"><section class="panel" id="${single?'single-evaluation-summary':'comparison-summary'}" aria-live="polite">${performanceSummary(mode)}</section></aside></div>${performanceResults(mode)}${performanceHistory(mode)}${evaluationMetricsPanel()}`;
+}
+function comparisonPage(){return performancePage('comparison');}
+function singleEvaluationPage(){return performancePage('single');}
+function bindPerformanceSettings(){
+  $$('[data-performance-size]').forEach(el=>el.addEventListener('change',e=>{const mode=el.dataset.performanceSize,value=Number(e.target.value);if(!performanceModes.includes(mode)||performanceDraftLocked(mode)||![5,10,100].includes(value))return;performanceView(mode).size=value;const panel=$(mode==='single'?'#single-evaluation-summary':'#comparison-summary');if(panel)panel.innerHTML=performanceSummary(mode);}));
+  $$('[data-performance-name]').forEach(el=>el.addEventListener('input',e=>{const mode=el.dataset.performanceName;if(performanceModes.includes(mode)&&!performanceDraftLocked(mode))performanceView(mode).name=String(e.target.value).slice(0,200);}));
+}
+async function performanceApi(path,method='GET',data){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
+  try{return await readApiResponse(await fetch(path,{method,credentials:'same-origin',cache:'no-store',signal:controller.signal,headers:method==='GET'?{}:{'Content-Type':'application/json'},...(data===undefined?{}:{body:JSON.stringify(data)})}));}
+  catch(error){if(controller.signal.aborted)throw Object.assign(new Error('요청 확인 시간이 초과됐어요. 실행 기록을 확인해 주세요.'),{code:'REQUEST_TIMEOUT'});throw error;}
+  finally{clearTimeout(timer);}
+}
+function stopPerformancePolling(){clearTimeout(performancePollTimer);performancePollTimer=null;}
+function schedulePerformancePoll(mode){
+  clearTimeout(performancePollTimer);performancePollTimer=null;
+  if(performanceMode()!==mode||!performanceActive(performanceView(mode).summary))return;
+  performancePollTimer=setTimeout(()=>{performancePollTimer=null;refreshPerformanceRun(mode);},2500);
+}
+function validatePerformanceSummary(value){if(!value||!performanceUuid.test(value.id)||!Array.isArray(value.models)||!Array.isArray(value.modelResults)||!Number.isInteger(value.total)||!Number.isInteger(value.finished))throw new Error('평가 결과 형식을 확인할 수 없어요.');return value;}
+async function loadPerformanceData(force=false){
+  const p=state.performance,mode=performanceMode();if(!mode||!state.dbReady||p.datasetLoading||p.historyLoading||!force&&(p.loaded||p.datasetError||p.historyError))return;
+  p.datasetLoading=p.historyLoading=true;p.datasetError=p.historyError='';refreshPerformanceView(mode,{dataset:true,history:true});
+  const results=await Promise.allSettled([performanceApi('/api/performance/dataset'),performanceApi('/api/performance')]);
+  p.datasetLoading=p.historyLoading=false;
+  try{const result=results[0];if(result.status==='rejected')throw result.reason;const d=result.value.dataset;if(!d||d.id!=='ground_truth_set/v1'||!Array.isArray(d.items)||d.items.some(item=>!performanceUuid.test(item.id)||typeof item.sourceId!=='string'))throw new Error('평가 데이터 형식을 확인할 수 없어요.');p.dataset=d;}catch(error){p.dataset=null;p.datasetError=error.message||'평가 데이터를 불러오지 못했어요.';}
+  try{const result=results[1];if(result.status==='rejected')throw result.reason;if(!Array.isArray(result.value.evaluations))throw new Error('평가 기록 형식을 확인할 수 없어요.');p.history=result.value.evaluations.filter(row=>performanceUuid.test(row.id)&&Array.isArray(row.models));}catch(error){p.historyError=error.message||'평가 기록을 불러오지 못했어요.';}
+  p.loaded=!p.datasetError&&!p.historyError;
+  const activeMode=performanceMode();if(!activeMode)return;
+  refreshPerformanceView(activeMode,{dataset:true,history:true});
+  const view=performanceView(activeMode);
+  if(!view.selectedId){const latest=p.history.find(row=>activeMode==='single'?row.models.length===1:row.models.length>=2);if(latest){view.selectedId=latest.id;persistPerformanceSelection();}}
+  if(view.selectedId)await refreshPerformanceRun(activeMode,{withCases:true});
+}
+async function refreshPerformanceRun(mode,{withCases=false}={}){
+  if(!performanceModes.includes(mode))return;const view=performanceView(mode),id=view.selectedId;if(!performanceUuid.test(id)||view.loading)return;
+  const request=++view.requestVersion,wasActive=performanceActive(view.summary),isCurrent=()=>performanceMode()===mode&&view.selectedId===id&&request===view.requestVersion;view.loading=true;
+  try{const result=validatePerformanceSummary(await performanceApi('/api/performance/'+encodeURIComponent(id)));if(view.selectedId!==id||request!==view.requestVersion)return;view.summary=result;view.error='';const index=state.performance.history.findIndex(row=>row.id===id);if(index<0)state.performance.history.unshift(result);else state.performance.history[index]=result;
+    if(isCurrent()){refreshPerformanceView(mode);if(withCases||wasActive&&!performanceActive(result))await loadPerformanceCases(mode,view.offset);}
+  }catch(error){if(view.selectedId===id&&request===view.requestVersion)view.error=error.message||'진행 상태를 불러오지 못했어요.';}
+  finally{if(request===view.requestVersion)view.loading=false;if(isCurrent()){refreshPerformanceView(mode);if(!view.error)schedulePerformancePoll(mode);if(!performanceActive(view.summary)){const history=$('#performance-history');if(history)history.outerHTML=performanceHistory(mode);}}}
+}
+async function loadPerformanceCases(mode,offset=0){
+  if(!performanceModes.includes(mode)||!Number.isInteger(offset)||offset<0)return;const view=performanceView(mode),id=view.selectedId;if(!performanceUuid.test(id))return;
+  const request=++view.caseVersion;view.casesLoading=true;view.caseError='';refreshPerformanceCasesView(mode);
+  try{const result=await performanceApi('/api/performance/'+encodeURIComponent(id)+'/cases?offset='+offset+'&limit=20');if(view.selectedId!==id||request!==view.caseVersion)return;if(!Array.isArray(result.cases)||!Number.isInteger(result.total)||result.cases.length>20)throw new Error('상세 결과 형식을 확인할 수 없어요.');view.cases=result.cases;view.offset=offset;view.casesTotal=result.total;}
+  catch(error){if(view.selectedId===id&&request===view.caseVersion)view.caseError=error.message||'상세 결과를 불러오지 못했어요.';}
+  finally{if(request===view.caseVersion)view.casesLoading=false;if(view.selectedId===id&&request===view.caseVersion)refreshPerformanceCasesView(mode);}
+}
+async function openPerformanceRun(mode,id){
+  if(!performanceModes.includes(mode)||!performanceUuid.test(id))return;const view=performanceView(mode);clearTimeout(performancePollTimer);view.requestVersion++;view.caseVersion++;Object.assign(view,{selectedId:id,summary:null,cases:[],offset:0,casesTotal:0,error:'',caseError:'',loading:false,casesLoading:false});persistPerformanceSelection();refreshPerformanceView(mode,{history:true});await refreshPerformanceRun(mode,{withCases:true});
+}
+async function submitPerformance(mode){
+  if(!performanceModes.includes(mode))return;const view=performanceView(mode);if(view.submitting)return;
+  if(!view.pendingSubmission){const problem=performanceValidation(mode);if(problem){view.error=problem;refreshPerformanceView(mode);return;}view.pendingSubmission={name:view.name.trim()||((mode==='single'?'단일 모델 평가':'모델 비교')+' · '+new Date().toLocaleString('ko-KR')),datasetId:'ground_truth_set/v1',emailIds:selectedPerformanceEmails(mode).map(row=>row.id),models:performanceModels(mode),defense:'off',idempotencyKey:createId()};persistPerformanceSelection();}
+  const payload=view.pendingSubmission;view.submitting=true;view.error='';refreshPerformanceView(mode,{controls:true});
+  try{const response=await performanceApi('/api/performance','POST',payload);if(!performanceUuid.test(response?.id))throw new Error('평가 접수 결과를 확인하지 못했어요.');view.pendingSubmission=null;persistPerformanceSelection();await openPerformanceRun(mode,response.id);}
+  catch(error){const uncertain=!error.status||error.status>=500;if(!uncertain){view.pendingSubmission=null;persistPerformanceSelection();}view.error=(error.message||'평가 요청을 확인하지 못했어요.')+(uncertain?' 자동으로 다시 실행하지 않았어요. 같은 요청의 상태를 확인해 주세요.':'');}
+  finally{view.submitting=false;refreshPerformanceView(mode,{controls:true});}
+}
+async function cancelPerformance(mode){
+  if(!performanceModes.includes(mode))return;const view=performanceView(mode),id=view.selectedId;if(!performanceUuid.test(id)||view.cancelling||!performanceActive(view.summary))return;
+  view.cancelling=true;view.error='';refreshPerformanceView(mode);
+  try{await performanceApi('/api/performance/'+encodeURIComponent(id)+'/cancel','POST',{});if(view.selectedId===id){view.loading=false;view.requestVersion++;await refreshPerformanceRun(mode,{withCases:true});}}
+  catch(error){if(view.selectedId===id)view.error=error.message||'중단 요청을 확인하지 못했어요. 진행 상태를 다시 확인해 주세요.';}
+  finally{view.cancelling=false;refreshPerformanceView(mode);}
+}
+function mountPerformance(){const mode=performanceMode();if(!mode)return;bindPerformanceSettings();if(!state.dbReady)return;const p=state.performance;if(!p.loaded&&!p.datasetError&&!p.historyError){loadPerformanceData();return;}const view=performanceView(mode);if(view.selectedId&&!view.summary&&!view.loading)refreshPerformanceRun(mode,{withCases:true});else schedulePerformancePoll(mode);}
 function formatTokens(value){return Number.isInteger(value)&&value>=0?value.toLocaleString():'—';}
 function summaryPanel(){
   const r=state.summary,live=r?.mode==='live';
@@ -450,8 +564,9 @@ async function showDatabaseExperiment(id){
 }
 
 const pages={overview,email:emailPage,'single-evaluation':singleEvaluationPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,settings:settingsPage};
-function route(){const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
+function route(){stopPerformancePolling();const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
 function bindPage(){
+  mountPerformance();
   if(state.route==='comparison'){
     bindComparisonModelControls();
     $$('input[name="comparison-defense"]').forEach(el=>el.addEventListener('change',e=>{if(e.target.checked)updateComparisonDraft('defense',e.target.value);}));
@@ -715,11 +830,18 @@ export function validateImport(d){
 async function importData(file){if(!file)return;if(!datasetWritable())return;if(state.dbReady)return toast('DB 모드에서는 데이터 추가로 직접 등록해 주세요. JSON 가져오기는 브라우저 모드에서만 지원해요.');if(file.size>5*1024*1024)return toast('JSON 파일은 5MB 이하로 선택해 주세요.');try{const d=validateImport(JSON.parse(await file.text()));modal('데이터 가져오기',`<p class="small muted">정상 데이터 ${d.normal.length}건, 공격 시나리오 ${d.attacks.length}건, 실험 계획 ${d.plans.length}건, 의사결정 ${d.notes.length}건을 읽었어요.</p><p class="small" style="margin-top:15px">현재 브라우저의 데이터가 이 파일의 내용으로 교체돼요. 필요한 기록은 먼저 내보내 주세요.</p>`,`<button class="btn" data-action="close-modal">취소</button><button class="btn" data-action="export-data">현재 데이터 백업</button><button class="btn primary" id="confirm-import">교체하여 가져오기</button>`);$('#confirm-import').addEventListener('click',()=>{Object.assign(state,d);Object.assign(localData,{normal:state.normal,attacks:state.attacks,categories:state.categories});state.attackIds=[];state.categoryIds=[];state.categoryCounts=Object.create(null);state.vectorIds=['direct','indirect'];state.categoryFilter='all';state.selectedSample=d.normal[0]?.id||'';state.summary=null;const ok=persist();$('#modal').close();shell();if(ok)toast('데이터를 가져왔어요.');});}catch(e){toast(e instanceof SyntaxError?'JSON 파일을 읽을 수 없어요. 파일 형식을 확인해 주세요.':e.message);}}
 const actions={
  'toggle-evaluation-menu':toggleEvaluationMenu,
+ 'performance-run':el=>submitPerformance(el.dataset.mode),
+ 'performance-refresh':()=>loadPerformanceData(true),
+ 'performance-open':el=>openPerformanceRun(el.dataset.mode,el.dataset.id),
+ 'performance-result-refresh':el=>refreshPerformanceRun(el.dataset.mode,{withCases:true}),
+ 'performance-cases-refresh':el=>loadPerformanceCases(el.dataset.mode,performanceView(el.dataset.mode).offset),
+ 'performance-page':el=>loadPerformanceCases(el.dataset.mode,Number(el.dataset.offset)),
+ 'performance-cancel':el=>cancelPerformance(el.dataset.mode),
  'comparison-add-model':addComparisonModel,
  'comparison-remove-model':el=>removeComparisonModel(Number(el.dataset.index)),
  'menu':()=>{const open=$('.sidebar').classList.toggle('open');$('.mobile-menu').setAttribute('aria-expanded',String(open));},
  'close-modal':()=>$('#modal').close(),
- 'guide':()=>modal('핀코드 프로토타입 안내',`<div class="detail-block"><h3>직접 사용해 보세요</h3><p>① 이메일 요약기에서 실제 모델로 본문 요약·측정값 확인\n② 데이터 관리에서 정상 원문·공격 시나리오 추가\n③ 공격 실험에서 카테고리별 시나리오 수를 정해 각 1회 실행 또는 계획 저장\n④ 실험 결과에서 기존 기록 확인·CSV 내보내기\n⑤ 단일 모델 성능 평가에서 한 모델의 평가 조건 준비\n⑥ 모델 별 비교에서 2~5개 모델과 방어 적용 조건 준비</p></div>${notice('실제 요약은 서버 키 설정 후 사용할 수 있어요. DB 연결 시 공격 실험을 실제 실행하고 결과를 저장해요. 방어·첨부파일 처리는 구현 예정이에요. 데이터 관리 상단에서 저장 위치를 확인해 주세요.')}`),
+ 'guide':()=>modal('핀코드 프로토타입 안내',`<div class="detail-block"><h3>직접 사용해 보세요</h3><p>① 이메일 요약기에서 실제 모델로 본문 요약·측정값 확인\n② 데이터 관리에서 정상 원문·공격 시나리오 추가\n③ 공격 실험에서 카테고리별 시나리오 수를 정해 각 1회 실행 또는 계획 저장\n④ 실험 결과에서 기존 기록 확인·CSV 내보내기\n⑤ 단일 모델 성능 평가에서 정상 이메일 일괄 요약·자동 채점\n⑥ 모델 별 비교에서 2~5개 모델의 요약 품질·시간·토큰 비교</p></div>${notice('실제 요약은 서버 키 설정 후 사용할 수 있어요. DB 연결 시 공격 실험을 실제 실행하고 결과를 저장해요. 방어·첨부파일 처리는 구현 예정이에요. 데이터 관리 상단에서 저장 위치를 확인해 주세요.')}`),
  'chart-group':el=>{state.group=Number(el.dataset.group);shell();},
  'load-sample':()=>loadSample(),
  'clear-email':()=>{if(state.running)return;state.email='';state.emailTitle='';state.files=[];invalidateEmailResult();shell();},
