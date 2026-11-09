@@ -1,0 +1,49 @@
+{
+  "ready": {
+    "ready": true
+  },
+  "database": {
+    "configured": true,
+    "ready": true,
+    "engine": "postgresql"
+  },
+  "attackInputMode": "scenario-only-v1",
+  "canaryInputFormat": "unicode-single-line-v2",
+  "evaluationModes": [
+    "manual",
+    "exact",
+    "canary",
+    "system_prompt_leak"
+  ],
+  "normal": 105,
+  "attacks": 19,
+  "datasetsPreserved": true,
+  "historicalExperimentsPreserved": 88,
+  "historicalRunsPreserved": 240,
+  "matchingAssets": [
+    "app.js",
+    "categories.js",
+    "data.js",
+    "style.css",
+    "attack-results.js",
+    "attack-results.css",
+    "index.html"
+  ],
+  "featureCommit": "8898bab450fe428204c5c49c983c1706e1916a63",
+  "railwayDeployment": "02396962-90b3-4400-a529-375a33f1d2cf",
+  "railwayStatus": "SUCCESS",
+  "siteSourceCommit": "a933de585eccc9335064e4f16739adca4a3c8652",
+  "siteDeployment": "appgdep_6af16a623d108191adc05d56e568741c",
+  "siteStatus": "succeeded",
+  "tests": {
+    "javascript": 125,
+    "python": 123,
+    "pythonBrowserParity": 211
+  },
+  "paidModelCallsForValidation": 0,
+  "productionDataWrites": 0,
+  "browserQA": {
+    "localPhraseCreateAndDetail": "passed",
+    "postDeploy": "login gate; authenticated read-only API and assets verified"
+  }
+}
