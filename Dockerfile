@@ -5,8 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
-    && useradd --create-home --uid 10001 fincode
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r requirements.txt \
+    && useradd --create-home --uid 10001 fincode \
+    && install -d -m 0700 -o fincode /var/lib/fincode/attachments
 
 COPY backend/ ./backend/
 COPY config/ ./config/

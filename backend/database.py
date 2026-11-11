@@ -78,6 +78,8 @@ class Database:
             conn.execute('SELECT response_payload,lease_expires_at FROM runs LIMIT 0')
             conn.execute('SELECT category_id FROM attack_scenarios LIMIT 0')
             conn.execute('SELECT scope FROM attack_categories LIMIT 0')
+            conn.execute('SELECT storage_backend,extraction_metadata FROM attachments LIMIT 0')
+            conn.execute('SELECT scenario_id,attachment_id,position FROM scenario_attachments LIMIT 0')
         return {'configured': True, 'ready': True, 'engine': 'postgresql'}
 
     def seed(self):
@@ -104,6 +106,11 @@ class Database:
                 FROM attack_scenarios a ORDER BY scenario_key,revision DESC) a
                 WHERE archived_at IS NULL ORDER BY registered_at,scenario_key''').fetchall()
             categories = conn.execute('SELECT id,name,scope FROM attack_categories ORDER BY sort_order,name,id').fetchall()
+            from backend.attachments import load_attachments
+            attachment_catalog = {}
+            for row in attacks:
+                ids = self._scenario_attachment_ids(conn, row['id'])
+                attachment_catalog[str(row['id'])] = load_attachments(conn, ids, include_text=False) if ids else []
         return {'evaluationModes': list(EVALUATION_MODES), 'attackInputMode': 'scenario-only-v1',
                 'canaryInputFormat': 'unicode-single-line-v2',
                 'categories': [dict(id=r['id'], name=r['name'], scope=r['scope']) for r in categories],
@@ -120,7 +127,15 @@ class Database:
                     technique=r['technique'], goal=r['goal'], payload=r['payload'], criterion=r['success_criterion']['description'],
                     expectedOutput=r['success_criterion'].get('expectedOutput',''),
                     evaluationMode=r['success_criterion'].get('type','manual'), enabled=r['enabled'],
+                    attachmentIds=[item['id'] for item in attachment_catalog[str(r['id'])]],
+                    attachments=attachment_catalog[str(r['id'])],
                     provenance='sample' if r['provenance']=='sample' else 'user') for r in attacks]}
+
+    @staticmethod
+    def _scenario_attachment_ids(conn, scenario_id):
+        return [str(row['attachment_id']) for row in conn.execute(
+            'SELECT attachment_id FROM scenario_attachments WHERE scenario_id=%s ORDER BY position',
+            (scenario_id,)).fetchall()]
 
     def review_normal_batch(self, data):
         """Approve exactly the supplied versions atomically without changing their content."""
@@ -232,6 +247,14 @@ class Database:
             vector, channel = data.get('vector'), data.get('channel')
             if vector not in ('direct','indirect') or channel not in ('input','email','attachment') or (vector=='direct') != (channel=='input'):
                 raise DataError('직접 공격은 사용자 입력, 간접 공격은 이메일 또는 첨부파일 경로를 선택해 주세요.')
+            from backend.attachments import load_attachments, compose_attachment_input
+            attachment_ids = data.get('attachmentIds', [])
+            attached = load_attachments(conn, attachment_ids)
+            if attached and channel != 'attachment':
+                raise DataError('첨부파일은 간접 공격의 첨부파일 경로에만 연결할 수 있습니다.',400,'ATTACHMENT_CHANNEL_MISMATCH')
+            payload = text(data.get('payload', ''), '공격문', required=not bool(attached))
+            if attached:
+                compose_attachment_input(payload, attached)
             enabled = data.get('enabled',True)
             if type(enabled) is not bool:
                 raise DataError('활성화 여부를 확인해 주세요.')
@@ -253,8 +276,10 @@ class Database:
                 criterion.update(scope='full_system_prompt', normalization='nfc-ascii-whitespace-v1')
             insert(conn,'attack_scenarios',dict(**common, scenario_key=key, category_id=category_id, name=text(data.get('name'),'이름',200), vector=vector,
                 channel={'input':'user_instruction','email':'email_body','attachment':'attachment_text'}[channel],
-                technique=text(data.get('technique'),'기법',200), goal=text(data.get('goal'),'목표',200), payload=text(data.get('payload'),'공격문'),
+                technique=text(data.get('technique'),'기법',200), goal=text(data.get('goal'),'목표',200), payload=payload,
                 success_criterion=criterion, enabled=enabled, provenance='sample' if sample else 'team'))
+            for position, item in enumerate(attached):
+                insert(conn,'scenario_attachments',dict(scenario_id=identifier,attachment_id=item['id'],position=position))
         else:
             raise DataError('지원하지 않는 데이터 종류입니다.')
         return identifier
@@ -281,6 +306,8 @@ class Database:
                     data = {**data, 'categoryId': current['category_id']}
                 if kind == 'attacks' and 'evaluationMode' not in data:
                     data = {**data, 'evaluationMode': current['success_criterion']['type']}
+                if kind == 'attacks' and 'attachmentIds' not in data and data.get('channel') == 'attachment':
+                    data = {**data, 'attachmentIds': self._scenario_attachment_ids(conn, current['id'])}
             self._save(conn,kind,data,key,1 if not current else current['revision']+1)
         return self.datasets()
 
@@ -317,25 +344,36 @@ class Database:
             submission_key=key,submission_sha256=fingerprint,started_at=now))
         category_names={r['id']:r['name'] for r in conn.execute('SELECT id,name FROM attack_categories').fetchall()} if any(scenario for _,scenario,_ in inputs) else {}
         first_run=None
+        first_messages=None
+        from backend.attachments import load_attachments, compose_attachment_input
         for number,(email,scenario,label) in enumerate(inputs,1):
+            attachment_ids = self._scenario_attachment_ids(conn, scenario['id']) if scenario else (data.get('attachments', []) if immediate else [])
+            attached = load_attachments(conn, attachment_ids)
             for repeat in range(1,data.get('repeat',1)+1):
                 messages=[{'role':'system','content':config['systemPrompt']}]
                 if scenario:
-                    # Both vector categories test the saved payload verbatim. No
-                    # baseline email, title wrapper, decoding or normalization.
-                    messages.append({'role':'user','content':scenario['payload']})
+                    # Text-only scenarios stay verbatim. File scenarios append the
+                    # frozen extracted text in the user message, never the system role.
+                    content = compose_attachment_input(scenario['payload'], attached) if attached else scenario['payload']
+                    messages.append({'role':'user','content':content})
                     email_snapshot=None
                 else:
                     email_snapshot={'subject':email['subject'],'body':email['body']}
-                    messages.append({'role':'user','content':f"제목: {email['subject']}\n\n{email['body']}"})
+                    content = f"제목: {email['subject']}\n\n{email['body']}"
+                    messages.append({'role':'user','content':compose_attachment_input(content, attached) if attached else content})
+                first_messages = first_messages or messages
                 snapshot={'email':email_snapshot,'messages':messages,
-                    'inputMode':'scenario-only-v1' if scenario else 'email-v1',
-                    'injectionStrategy':'scenario-only' if scenario else 'none',
+                    'inputMode':'attachment-v1' if attached else ('scenario-only-v1' if scenario else 'email-v1'),
+                    'injectionStrategy':'attachment-text' if attached and scenario else ('scenario-only' if scenario else 'none'),
                     'successCriterion':scenario['success_criterion'] if scenario else None,
                     'attackCategoryId':scenario['category_id'] if scenario else None,
                     'attackScenario':dict(id=str(scenario['id']),key=scenario['scenario_key'],revision=scenario['revision'],
                         name=scenario['name'],vector=scenario['vector'],channel=scenario['channel'],payload=scenario['payload'],
                         categoryId=scenario['category_id'],categoryName=category_names.get(scenario['category_id'],'미분류')) if scenario else None}
+                if attached:
+                    snapshot['attachments'] = attached
+                    if scenario:
+                        snapshot['attackScenario']['attachmentIds'] = attachment_ids
                 cid,rid=str(uuid4()),str(uuid4())
                 first_run=first_run or rid
                 insert(conn,'experiment_cases',dict(id=cid,experiment_id=eid,case_number=number,repeat_index=repeat,expected_label=label,
@@ -348,7 +386,7 @@ class Database:
                     environment_snapshot={'runtime':'python-fastapi'}))
                 if immediate:
                     self._call(conn,rid,data['model'],snapshot,config)
-        return {'id':eid,'runId':first_run,'existing':False}
+        return {'id':eid,'runId':first_run,'existing':False,'messages':first_messages}
 
     def prepare_summary(self,data,config):
         with self.connect() as conn:
@@ -356,6 +394,8 @@ class Database:
             return self._bundle(conn,data,config,[(email,None,'unknown')],True)
 
     def enqueue(self,data,config):
+        if data.get('attachments'):
+            raise DataError('일반 실험은 저장된 이메일 또는 시나리오의 입력을 사용합니다. 첨부파일은 공격 시나리오에 연결해 주세요.',400,'UNEXPECTED_EXPERIMENT_ATTACHMENT')
         repeat=data.get('repeat',1)
         if type(repeat) is not int or not 1<=repeat<=10:
             raise DataError('시나리오별 반복 횟수는 1~10회로 설정해 주세요.')
@@ -384,8 +424,11 @@ class Database:
                     a=conn.execute('SELECT * FROM attack_scenarios WHERE id=%s AND archived_at IS NULL AND enabled',(uuid(identifier),)).fetchone()
                     if not a:
                         raise DataError('사용할 수 없는 공격 시나리오입니다.')
-                    if a['channel'] not in ('user_instruction','email_body'):
-                        raise DataError('첨부파일 공격은 추출 기능 구현 후 실행할 수 있습니다.')
+                    if a['channel'] in ('attachment_text','image_ocr'):
+                        if not self._scenario_attachment_ids(conn, a['id']):
+                            raise DataError('첨부파일 공격에는 추출 완료된 파일을 연결해 주세요.',400,'ATTACHMENT_REQUIRED')
+                    elif a['channel'] not in ('user_instruction','email_body'):
+                        raise DataError('지원하지 않는 공격 경로입니다.')
                     # Ignore a legacy client's emailId for attack experiments.
                     inputs.append((None,a,'attack'))
             else:

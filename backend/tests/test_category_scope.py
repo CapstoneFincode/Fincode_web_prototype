@@ -150,13 +150,15 @@ class CategoryScopeDatabaseTest(unittest.IsolatedAsyncioTestCase):
             with self.db.connect() as conn:
                 conn.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
 
-    async def test_health_requires_the_scope_column(self):
+    async def test_health_requires_scope_and_attachment_schema(self):
         schema = 'scope_health_' + uuid4().hex
         with self.db.connect() as conn:
             conn.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
             conn.execute(sql.SQL('CREATE TABLE {}.runs (response_payload jsonb, lease_expires_at timestamptz)').format(sql.Identifier(schema)))
             conn.execute(sql.SQL('CREATE TABLE {}.attack_scenarios (category_id text)').format(sql.Identifier(schema)))
             conn.execute(sql.SQL('CREATE TABLE {}.attack_categories (id text)').format(sql.Identifier(schema)))
+            conn.execute(sql.SQL('CREATE TABLE {}.attachments (storage_backend text, extraction_metadata jsonb)').format(sql.Identifier(schema)))
+            conn.execute(sql.SQL('CREATE TABLE {}.scenario_attachments (scenario_id uuid, attachment_id uuid, position integer)').format(sql.Identifier(schema)))
         connect = self.db.connect
         @contextmanager
         def fixture_connection():
@@ -170,6 +172,10 @@ class CategoryScopeDatabaseTest(unittest.IsolatedAsyncioTestCase):
                 with connect() as conn:
                     conn.execute(sql.SQL('ALTER TABLE {}.attack_categories ADD COLUMN scope text').format(sql.Identifier(schema)))
                 self.assertTrue(self.db.health()['ready'])
+                with connect() as conn:
+                    conn.execute(sql.SQL('ALTER TABLE {}.attachments DROP COLUMN extraction_metadata').format(sql.Identifier(schema)))
+                with self.assertRaises(psycopg.errors.UndefinedColumn):
+                    self.db.health()
         finally:
             with connect() as conn:
                 conn.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))

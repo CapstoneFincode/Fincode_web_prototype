@@ -34,11 +34,17 @@ export function normalizeCategoryData(categories, attacks){
   });
   return {categories:catalog,attacks:rows};
 }
+// A selected file name alone is not executable: all referenced server objects must be ready.
+export function attachmentScenarioReady(attack){
+  const ids=attack.attachmentIds,files=attack.attachments;
+  return attack.vector==='indirect'&&Array.isArray(ids)&&ids.length>0&&ids.length<=5&&new Set(ids).size===ids.length&&ids.every(id=>typeof id==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))&&Array.isArray(files)&&ids.every(id=>files.some(file=>file&&file.id===id&&file.status==='ready'));
+}
+const executableAttack=attack=>attack.enabled&&(attack.channel!=='attachment'||attachmentScenarioReady(attack));
 export function categoryGroups(categories, attacks){
   return categories.map(category=>{
     const rows=attacks.filter(a=>categoryFor(a)===category.id);
-    return {...category,rows,total:rows.length,runnable:rows.filter(a=>a.enabled&&a.channel!=='attachment').length,
-      disabled:rows.filter(a=>!a.enabled).length,unsupported:rows.filter(a=>a.enabled&&a.channel==='attachment').length};
+    return {...category,rows,total:rows.length,runnable:rows.filter(a=>executableAttack(a)).length,
+      disabled:rows.filter(a=>!a.enabled).length,unsupported:rows.filter(a=>a.enabled&&a.channel==='attachment'&&!attachmentScenarioReady(a)).length};
   });
 }
 /** Scope controls empty placeholders; actual records always retain their own path. */
@@ -62,9 +68,9 @@ export function selectionPlan(attacks,categoryIds,categoryCounts={}, {maxScenari
   const distinct=attacks.filter((a,index)=>{const id=a.id||a.dbId||index;if(seen.has(id))return false;seen.add(id);return true;});
   const rows=distinct.filter(a=>chosen.includes(categoryFor(a)));
   const disabled=rows.filter(a=>!a.enabled).length;
-  const unsupported=rows.filter(a=>a.enabled&&a.channel==='attachment').length;
+  const unsupported=rows.filter(a=>a.enabled&&a.channel==='attachment'&&!attachmentScenarioReady(a)).length;
   const byCategory=chosen.map(id=>{
-    const eligible=registrationOrder(rows.filter(a=>categoryFor(a)===id&&a.enabled&&a.channel!=='attachment'));
+    const eligible=registrationOrder(rows.filter(a=>categoryFor(a)===id&&executableAttack(a)));
     const raw=Object.hasOwn(categoryCounts,id)?categoryCounts[id]:1;
     const count=typeof raw==='number'||typeof raw==='string'&&raw.trim()!==''?Number(raw):NaN;
     let error='';

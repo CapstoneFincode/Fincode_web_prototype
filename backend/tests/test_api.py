@@ -45,7 +45,11 @@ class APITest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(configured=configured):
                 result = await self.request("GET", "/api/health", key=key)
                 self.assertEqual(result.status_code, 200)
-                self.assertEqual(result.json(), {
+                health = result.json()
+                capabilities = health.pop('attachmentCapabilities')
+                self.assertFalse(capabilities['enabled'])
+                self.assertIn('hwp', capabilities['extensions'])
+                self.assertEqual(health, {
                     "configured": configured,
                     "provider": "baze",
                     "promptVersion": CONFIG["version"],
@@ -177,12 +181,12 @@ class APITest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.upstream_calls, [])
                 self.assertNotIn("secret-body", result.text)
 
-    async def test_unimplemented_features_are_rejected_explicitly(self):
+    async def test_unimplemented_defenses_and_invalid_attachment_ids_are_rejected(self):
         for change, code in [
             ({"defense": "filter"}, "UNSUPPORTED_DEFENSE"),
             ({"defense": None}, "UNSUPPORTED_DEFENSE"),
-            ({"attachments": ["file.pdf"]}, "UNSUPPORTED_ATTACHMENT"),
-            ({"attachments": None}, "UNSUPPORTED_ATTACHMENT"),
+            ({"attachments": ["file.pdf"]}, "INVALID_REQUEST"),
+            ({"attachments": None}, "INVALID_REQUEST"),
         ]:
             with self.subTest(change=change):
                 result = await self.request(json={**PAYLOAD, **change})
