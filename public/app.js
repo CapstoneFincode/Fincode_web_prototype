@@ -46,10 +46,13 @@ const previewMode=Boolean(document.querySelector('meta[name="fincode-preview"][c
 const workflowPreview=previewMode&&Boolean(document.querySelector('meta[name="fincode-workflow-preview"][content="true"]'));
 const workflowReports=[];
 const STORAGE=previewMode?'fincode-ui-categories-preview-v1':'fincode-lab-v1';
+// Legacy examples remain available only in the separate developer preview.
+// Preserve user copies, including a user row that happens to reuse an old ID.
+function activeAttackRows(rows){return previewMode?rows:rows.filter(r=>r.provenance!=='sample'||!attackSeeds.some(seed=>seed.id===r.id));}
 let storageError=false;
 function readStore(){try{const d=JSON.parse(localStorage.getItem(STORAGE)||'null');return d&&d.schemaVersion===1?validateImport(d):null;}catch{return null;}}
 const saved=readStore();
-const state={route:'overview',group:5,tab:'normal',query:'',filter:'all',resultModel:'all',resultGroup:'all',normal:saved?.normal||structuredClone(normalSeeds),attacks:saved?.attacks||structuredClone(attackSeeds),plans:saved?.plans||[],notes:saved?.notes||[],email:'',emailTitle:'',selectedSample:(saved?.normal||normalSeeds)[0]?.id||'',model:historicalRuns[0].model,defense:'off',files:[],summary:null,attackIds:attackSeeds.slice(0,3).map(x=>x.id)};
+const state={route:'overview',group:5,tab:'normal',query:'',filter:'all',resultModel:'all',resultGroup:'all',normal:saved?.normal||structuredClone(normalSeeds),attacks:activeAttackRows(saved?.attacks||structuredClone(attackSeeds)),plans:saved?.plans||[],notes:saved?.notes||[],email:'',emailTitle:'',selectedSample:(saved?.normal||normalSeeds)[0]?.id||'',model:historicalRuns[0].model,defense:'off',files:[],summary:null,attackIds:[]};
 // Local plans/notes and legacy browser datasets remain separate from PostgreSQL records.
 Object.assign(state,{categories:saved?.categories||structuredClone(categorySeeds),vectorIds:['direct','indirect'],categoryIds:['direct:instruction-override','direct:role-spoofing','indirect:instruction-override','indirect:role-spoofing'],categoryCounts:Object.create(null),categoryFilter:'all',categoryQuery:'',dataSort:'default',dbCategorySupport:false,dbCategoryScopeSupport:false,dbKind:'attack',dbNormalRepeat:1});
 const localData={normal:state.normal,attacks:state.attacks,categories:state.categories};
@@ -436,7 +439,7 @@ function adoptDatabase(data){
   state.dbCategoryScopeSupport=Array.isArray(data.categories)&&data.categories.every(c=>categoryScopes.includes(c.scope));
   state.dbEvaluationModes=Array.isArray(data.evaluationModes)?data.evaluationModes:[];
   state.dbEvaluationSupport=Array.isArray(data.evaluationModes)&&['manual','exact','system_prompt_leak'].every(mode=>data.evaluationModes.includes(mode));
-  state.dbCategorySupport=Array.isArray(data.categories);state.normal=data.normal;state.attacks=categoryData.attacks;state.categories=categoryData.categories;
+  state.dbCategorySupport=Array.isArray(data.categories);state.normal=data.normal;state.attacks=activeAttackRows(categoryData.attacks);state.categories=categoryData.categories;
   reconcileCategorySelection();
   if(!state.normal.some(x=>x.id===state.selectedSample))state.selectedSample=state.normal[0]?.id||'';
   state.attackIds=state.attackIds.filter(id=>state.attacks.some(x=>x.id===id));
@@ -825,7 +828,7 @@ export function validateImport(d){
       if(selections.some(c=>!plan.categories.some(category=>category.id===c.id&&category.name===c.name)||c.scenarioIds.some(id=>categoryFor(plan.scenarios.find(a=>a.id===id))!==c.id)))invalid();
     }
   }
-  return {normal:d.normal,attacks:categoryData.attacks,categories:categoryData.categories,plans,notes};
+  return {normal:d.normal,attacks:activeAttackRows(categoryData.attacks),categories:categoryData.categories,plans,notes};
 }
 async function importData(file){if(!file)return;if(!datasetWritable())return;if(state.dbReady)return toast('DB 모드에서는 데이터 추가로 직접 등록해 주세요. JSON 가져오기는 브라우저 모드에서만 지원해요.');if(file.size>5*1024*1024)return toast('JSON 파일은 5MB 이하로 선택해 주세요.');try{const d=validateImport(JSON.parse(await file.text()));modal('데이터 가져오기',`<p class="small muted">정상 데이터 ${d.normal.length}건, 공격 시나리오 ${d.attacks.length}건, 실험 계획 ${d.plans.length}건, 의사결정 ${d.notes.length}건을 읽었어요.</p><p class="small" style="margin-top:15px">현재 브라우저의 데이터가 이 파일의 내용으로 교체돼요. 필요한 기록은 먼저 내보내 주세요.</p>`,`<button class="btn" data-action="close-modal">취소</button><button class="btn" data-action="export-data">현재 데이터 백업</button><button class="btn primary" id="confirm-import">교체하여 가져오기</button>`);$('#confirm-import').addEventListener('click',()=>{Object.assign(state,d);Object.assign(localData,{normal:state.normal,attacks:state.attacks,categories:state.categories});state.attackIds=[];state.categoryIds=[];state.categoryCounts=Object.create(null);state.vectorIds=['direct','indirect'];state.categoryFilter='all';state.selectedSample=d.normal[0]?.id||'';state.summary=null;const ok=persist();$('#modal').close();shell();if(ok)toast('데이터를 가져왔어요.');});}catch(e){toast(e instanceof SyntaxError?'JSON 파일을 읽을 수 없어요. 파일 형식을 확인해 주세요.':e.message);}}
 const actions={

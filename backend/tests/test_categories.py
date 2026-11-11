@@ -96,8 +96,9 @@ class CategoryDatabaseTest(unittest.IsolatedAsyncioTestCase):
         created = await self.client.post('/api/data/attacks', json=ATTACK)
         self.assertEqual(created.status_code, 200, created.text)
         self.assertEqual(created.json()['attacks'][-1]['categoryId'], 'uncategorized')
-        sample = next(a for a in created.json()['attacks'] if a['id'] == 'ATK-S07')
-        self.assertEqual(sample['categoryId'], 'special-token')
+        self.assertFalse(any(a['id'] == 'ATK-S07' and a['provenance'] == 'sample'
+                             for a in created.json()['attacks']))
+        self.assertTrue(any(c['id'] == 'special-token' for c in created.json()['categories']))
 
     async def test_queued_experiment_preserves_category_after_scenario_edit(self):
         category = await self.create_category()

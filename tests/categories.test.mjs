@@ -7,7 +7,8 @@ import * as categoryTools from '../public/categories.js';
 import * as seeds from '../public/data.js';
 const {categorySeeds,normalizeCategoryData,categoryGroups,selectionPlan,registrationOrder}=categoryTools;
 const row=(id,extra={})=>({...seeds.attackSeeds[0],id,dbId:'db-'+id,...extra});
-const backup=()=>({schemaVersion:1,normal:structuredClone(seeds.normalSeeds),attacks:structuredClone(seeds.attackSeeds),plans:[],notes:[],categories:structuredClone(categorySeeds)});
+// Category behavior uses explicit user fixtures, not production startup samples.
+const backup=()=>({schemaVersion:1,normal:structuredClone(seeds.normalSeeds),attacks:structuredClone(seeds.attackSeeds).map(a=>({...a,provenance:'user'})),plans:[],notes:[],categories:structuredClone(categorySeeds)});
 
 test('category counts select distinct eligible scenarios and explicitly count exclusions',()=>{
   const attacks=[row('a'),row('b'),row('disabled',{enabled:false}),row('file',{channel:'attachment'}),row('other',{categoryId:'special-token'})];
@@ -52,7 +53,7 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^/,'const { historicalRuns, attackSeeds, normalSeeds, historicalTypes }=seeds; const { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, categoryScopes, categoryScope, categoryLayout, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan }=categoryTools;\n')
   .replace('export function validateImport','function validateImport')
   .replace(/route\(\);\s*refreshConnection\(\);\s*$/,'');
-function app({saved=null,preview=false,cryptoApi=webcrypto,elements={},queryLists={},fetcher=()=>{throw Error('Unexpected network');}}={}){
+function app({saved=backup(),preview=false,cryptoApi=webcrypto,elements={},queryLists={},fetcher=()=>{throw Error('Unexpected network');}}={}){
   const writes=[],toasts=[];
   const context=vm.createContext({toasts,seeds,categoryTools,structuredClone,crypto:cryptoApi,console,setTimeout,clearTimeout,AbortController,
     FormData:class {constructor(form){this.values=form.values||{}} get(key){return this.values[key]??null;} [Symbol.iterator](){return Object.entries(this.values)[Symbol.iterator]();}},
@@ -64,6 +65,24 @@ function app({saved=null,preview=false,cryptoApi=webcrypto,elements={},queryList
   // Use the context that contains both stubs and state.
   return {api:context.api,writes,toasts};
 }
+test('production retires only original attack samples on startup, import and DB adoption',()=>{
+  const fresh=app({saved:null}).api;
+  assert.equal(fresh.state.attacks.length,0);assert.equal(fresh.state.attackIds.length,0);
+  assert.equal(fresh.state.normal.length,seeds.normalSeeds.length);
+  const data=backup();data.attacks=structuredClone(seeds.attackSeeds);
+  const copied={...data.attacks[0],id:'user-copy',provenance:'user'};
+  const reused={...data.attacks[1],provenance:'user'};
+  data.attacks[1]=reused;data.attacks.push(copied);
+  data.plans=[{id:'old-plan',title:'보존할 과거 계획',model:'test',defense:'off',repeat:1,status:'not_run',createdAt:'2026-10-20',scenarios:[structuredClone(seeds.attackSeeds[0])]}];
+  const loaded=app({saved:data});
+  assert.deepEqual(Array.from(loaded.api.state.attacks,a=>a.id),[reused.id,copied.id]);
+  assert.deepEqual(JSON.parse(JSON.stringify(loaded.api.state.plans)),data.plans);
+  loaded.api.persist();assert.equal(loaded.writes.at(-1).value.attacks.length,2);
+  assert.equal(fresh.validateImport(data).attacks.length,2);
+  fresh.adoptDatabase({...data,categories:categorySeeds});assert.equal(fresh.state.attacks.length,2);
+  const preview=app({saved:null,preview:true}).api;
+  assert.equal(preview.state.attacks.length,seeds.attackSeeds.length);
+});
 test('category filter combines with route filter/search and sorts without dropping categories',()=>{
   const {api:a}=app();a.state.tab='attacks';a.state.categoryFilter='instruction-override';
   assert.equal(a.filteredData().length,2);a.state.filter='direct';assert.equal(a.filteredData().length,1);

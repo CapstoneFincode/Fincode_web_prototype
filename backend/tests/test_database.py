@@ -6,6 +6,7 @@ between cases. Real PostgreSQL/psycopg, mock model HTTP, no paid API requests.
 import asyncio
 import json
 import os
+from pathlib import Path
 import unittest
 from uuid import uuid4
 from unittest.mock import patch
@@ -375,12 +376,54 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
             response=await self.client.post('/api/experiments',json=self.payload(**changes))
             self.assertEqual(response.status_code,400,response.text)
         rows=(await self.client.get('/api/data')).json()
-        attachment=next(r for r in rows['attacks'] if r['channel']=='attachment')
+        created=await self.client.post('/api/data/attacks',json={**ATTACK,'vector':'indirect','channel':'attachment'})
+        attachment=created.json()['attacks'][-1]
         response=await self.client.post('/api/experiments',json=self.payload(scenarioIds=[attachment['dbId']]))
         self.assertEqual(response.status_code,400)
         sample=next(r for r in rows['normal'] if r['provenance']=='sample')
         self.assertEqual((await self.client.put('/api/data/normal/'+sample['id'],json=sample)).status_code,409)
         self.assertEqual(self.calls,[])
+
+    async def test_retired_ui_samples_preserve_user_data_completed_and_queued_runs(self):
+        root=Path(__file__).resolve().parents[2]
+        samples=json.loads((root/'database/seeds.json').read_text())['attacks']
+        retired_ids={a['id'] for a in samples}
+        # Reconstruct the pre-retirement state in the disposable database.
+        with self.db.connect() as conn:
+            for row in samples:
+                existing=conn.execute("SELECT id FROM attack_scenarios WHERE scenario_key=%s AND provenance='sample'",(row['id'],)).fetchone()
+                if existing:
+                    conn.execute('UPDATE attack_scenarios SET archived_at=NULL WHERE id=%s',(existing['id'],))
+                else:
+                    self.db._save(conn,'attacks',row,key=row['id'],sample=True)
+            # Guard against deleting user data just because it reuses a seed ID.
+            self.db._save(conn,'attacks',ATTACK,key='ATK-S02',revision=2)
+        before=self.db.datasets()
+        sample=next(a for a in before['attacks'] if a['id']=='ATK-S01')
+        completed=await self.start(scenarioIds=[sample['dbId']]);await self.app.state.worker_once()
+        queued=await self.start(scenarioIds=[sample['dbId']])
+        completed_before=await self.detail(completed);queued_before=await self.detail(queued)
+        migration=(root/'database/migrations/006_retire_attack_ui_samples.sql').read_text()
+        with self.db.connect() as conn:
+            conn.execute(migration,prepare=False)
+            first=conn.execute("SELECT id,archived_at FROM attack_scenarios WHERE provenance='sample' ORDER BY id").fetchall()
+            conn.execute(migration,prepare=False)
+            self.assertEqual(first,conn.execute("SELECT id,archived_at FROM attack_scenarios WHERE provenance='sample' ORDER BY id").fetchall())
+            self.assertEqual(len(first),7)
+            self.assertTrue(all(r['archived_at'] is not None for r in first))
+        self.db.seed();self.db.seed()
+        after=self.db.datasets()
+        self.assertEqual(after['normal'],before['normal'])
+        self.assertEqual(after['categories'],before['categories'])
+        self.assertEqual(after['attacks'],[a for a in before['attacks'] if a['provenance']!='sample' or a['id'] not in retired_ids])
+        self.assertEqual(await self.detail(completed),completed_before)
+        self.assertEqual(await self.detail(queued),queued_before)
+        rejected=await self.client.post('/api/experiments',json=self.payload(scenarioIds=[sample['dbId']]))
+        self.assertEqual(rejected.status_code,400)
+        await self.app.state.worker_once()
+        finished=(await self.detail(queued))['runs'][0]
+        self.assertEqual(finished['status'],'succeeded')
+        self.assertEqual(finished['input_snapshot'],queued_before['runs'][0]['input_snapshot'])
 
     async def test_worker_recovery_closes_expired_calls_without_retry_or_zero_usage(self):
         eid=await self.start()

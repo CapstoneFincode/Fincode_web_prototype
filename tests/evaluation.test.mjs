@@ -46,7 +46,8 @@ test('browser save, reload, edit and sample copy retain explicit evaluation mode
   const loaded=setup({saved:writes.at(-1)});assert.equal(loaded.api.state.attacks.at(-1).evaluationMode,'system_prompt_leak');
   loaded.api.recordForm(row.id);await loaded.form.listeners.submit({preventDefault(){},target:loaded.form});
   assert.equal(loaded.api.state.attacks.at(-1).evaluationMode,'system_prompt_leak');
-  a.recordForm(a.state.attacks[0].id);await form.listeners.submit({preventDefault(){},target:form});
+  a.state.attacks.push({...seeds.attackSeeds[0],id:'custom-preview-sample'});
+  a.recordForm('custom-preview-sample');await form.listeners.submit({preventDefault(){},target:form});
   assert.equal(a.state.attacks.at(-1).evaluationMode,'system_prompt_leak');
 });
 test('DB save carries evaluation mode and backend-returned mode survives adoption',async()=>{

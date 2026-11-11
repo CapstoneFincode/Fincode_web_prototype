@@ -84,12 +84,12 @@ class Database:
         seeds = json.loads((Path(__file__).resolve().parent.parent/'database/seeds.json').read_text())
         with self.connect() as conn:
             conn.execute('SELECT pg_advisory_xact_lock(20261014, 68)')
-            for kind, rows in [('normal', seeds['normal']), ('attacks', seeds['attacks'])]:
-                table, key = ('email_cases','case_key') if kind == 'normal' else ('attack_scenarios','scenario_key')
-                for row in rows:
-                    exists = conn.execute(sql.SQL('SELECT id FROM {} WHERE {}=%s').format(sql.Identifier(table), sql.Identifier(key)), (row['id'],)).fetchone()
-                    if not exists:
-                        self._save(conn, kind, row, key=row['id'], sample=True)
+            # Attack samples are retired. Retain their fixture definitions for
+            # isolated previews/tests, but never add them to a team database.
+            for row in seeds['normal']:
+                exists = conn.execute('SELECT id FROM email_cases WHERE case_key=%s', (row['id'],)).fetchone()
+                if not exists:
+                    self._save(conn, 'normal', row, key=row['id'], sample=True)
 
     def datasets(self):
         with self.connect() as conn:
