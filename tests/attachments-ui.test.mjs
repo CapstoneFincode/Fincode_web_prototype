@@ -31,7 +31,7 @@ function setup(fetcher=async()=>{throw Error('Unexpected request');}){
     fetch:async(path,options)=>{calls.push({path,options});return fetcher(path,options);},
     localStorage:{getItem:()=>null,setItem:(key,value)=>writes.push(value)},
     document:{querySelector:s=>elements[s]||null,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){},scrollTo(){}},location:{hash:'#email'},toasts});
-  vm.runInContext(source+'\nshell=()=>{};renderRuntime=()=>{};toast=message=>toasts.push(message);globalThis.api={state,pages,actions,addFiles,removeAttachment,clearEmailAttachments,summaryRequest,summaryInputIssue,composedAttachmentCharacters,canSummarize,fileList,persist,closeAttachmentDraft,recordForm,normalizedAttachment,refreshConnection,runSummary,validateImport};',context);
+  vm.runInContext(source+'\nshell=()=>{};renderRuntime=()=>{};toast=message=>toasts.push(message);globalThis.api={state,pages,actions,bindPage,addFiles,removeAttachment,clearEmailAttachments,summaryRequest,summaryInputIssue,composedAttachmentCharacters,canSummarize,fileList,persist,closeAttachmentDraft,recordForm,normalizedAttachment,refreshConnection,runSummary,validateImport};',context);
   const a=context.api;
   Object.assign(a.state,{route:'email',attachmentsSupported:true,dbChecked:true,dbConfigured:true,dbReady:true,dbCategorySupport:true,dbEvaluationSupport:true,connection:'ready',models:[{id:'model'}],liveModel:'model'});
   return {a,calls,writes,toasts,elements,form};
@@ -148,6 +148,35 @@ test('summary limits match the composed Unicode input including title, quoted fi
   }
   a.state.files=[];a.state.email='😀'.repeat(30000);assert.equal(a.canSummarize(),true);
   a.state.email+='😀';assert.match(a.summaryInputIssue(),/30,000/);
+});
+
+test('email body input and counter preserve astral text and reject over-limit content without truncating',()=>{
+  const {a,elements}=setup();
+  for(const selector of ['#email-body','#email-title','#live-model','#sample','#files','#dropzone']){
+    elements[selector]={listeners:{},addEventListener(type,handler){this.listeners[type]=handler;}};
+  }
+  elements['#char-count']={};elements['#summarize-button']={};elements['#attachment-input-status']={};
+  a.bindPage();
+  const input=value=>elements['#email-body'].listeners.input({target:{value}});
+
+  input('한글 😀\u200b');
+  assert.equal(elements['#char-count'].textContent,'5자');
+  assert.match(a.pages.email(),/id="char-count"[^>]*>5자<\/span>/);
+  // HTML maxlength counts UTF-16 units, so the codepoint validator owns this limit.
+  assert.doesNotMatch(a.pages.email().match(/<textarea[^>]*id="email-body"[^>]*>/)[0],/maxlength=/);
+
+  for(const character of ['가','😀']){
+    const boundary=character.repeat(30000);input(boundary);
+    assert.equal(a.state.email,boundary);assert.equal(a.summaryRequest().email.body,boundary);
+    assert.equal(elements['#char-count'].textContent,(30000).toLocaleString()+'자');
+    assert.equal(elements['#summarize-button'].disabled,false);
+
+    const overflow=boundary+character;input(overflow);
+    assert.equal(a.state.email,overflow);assert.equal(a.summaryRequest().email.body,overflow);
+    assert.equal(elements['#char-count'].textContent,(30001).toLocaleString()+'자');
+    assert.equal(elements['#summarize-button'].disabled,true);
+    assert.match(elements['#attachment-input-status'].textContent,/30,000/);
+  }
 });
 
 test('scenario limits include only its payload and attachment wrappers, at the same Unicode boundary',async()=>{

@@ -6,12 +6,12 @@
   "migration": "007_attachments.sql",
   "tests": {
     "javascript": {
-      "passed": 148,
+      "passed": 149,
       "failed": 0,
       "skipped": 0
     },
     "python": {
-      "passed": 165,
+      "passed": 166,
       "failed": 0,
       "skipped": 0,
       "database": "native PostgreSQL 16.2",
@@ -43,7 +43,9 @@
     "Explicit six dependency in fresh Python environment.",
     "Unicode codepoint and complete input length counts aligned between browser and server.",
     "Pending upload cancellation cannot revive removed files or release the processing slot early.",
-    "Normal email experiments reject ad-hoc attachments."
+    "Normal email experiments reject ad-hoc attachments.",
+    "Arbitrarily long Content-Length headers return bounded 413 responses instead of integer-conversion 500 errors.",
+    "Email body display and 30000-character validation use Unicode codepoints; over-limit paste is preserved and execution blocked."
   ],
   "unverified": [
     "Docker image build: Docker unavailable in executor.",
@@ -52,5 +54,36 @@
   ],
   "productionDataWrites": 0,
   "productionDeployments": 0,
-  "mainBranchWrites": 0
+  "mainBranchWrites": 0,
+  "recheck": {
+    "baseFeatureCommit": "db7629a0cfa920d407699f724f6aaa9bdb85c99d",
+    "javascriptPassed": 149,
+    "pythonPassed": 166,
+    "failed": 0,
+    "skipped": 0,
+    "productionFrontendBuild": "passed",
+    "builtAssetsMatchSource": true,
+    "realHwpDocuments": 2,
+    "realOcrFormats": [
+      "png",
+      "jpeg",
+      "scanned-pdf"
+    ],
+    "paidModelCalls": 0,
+    "populatedMigrationUpgrade": {
+      "from": "001-006",
+      "to": "007",
+      "repeatedApply": "passed",
+      "existingTablesCompared": 13,
+      "existingRowsCompared": 17,
+      "existingFieldsPreserved": true,
+      "legacyAttachmentStates": [
+        "succeeded",
+        "pending",
+        "failed"
+      ],
+      "invalidConstraintCasesRejected": 7,
+      "health": "ready"
+    }
+  }
 }

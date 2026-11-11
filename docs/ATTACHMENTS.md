@@ -46,10 +46,18 @@
 
 ## 검증 및 운영 반영 전 확인
 
-- 최신 main 통합 후 JavaScript 148/148, Python 165/165 통과. Python은 임시 네이티브 PostgreSQL 16.2와 실제 HWP fixture를 포함하며 skip이 없다.
+- 최신 main 통합 후 JavaScript 149/149, Python 166/166 통과. Python은 임시 네이티브 PostgreSQL 16.2와 실제 HWP fixture를 포함하며 skip이 없다.
 - 브라우저에서 TXT 업로드 → 추출 완료 → 첨부만 요약 → DB 기록, 간접 첨부 시나리오 등록 → 해당 카테고리만 실행 → 결과의 실제 메시지 확인을 수행했다. 모델은 명확히 표시한 모의 응답이며 유료 모델 API는 호출하지 않았다.
 - 실제 HWP 2개, 한글·영문 PNG/JPEG, 스캔 PDF를 추가 검증했다. 개인 HWP 원본과 추출 내용은 저장소에 포함하지 않았다.
 - 일반 재실행: `node --test tests/*.test.mjs`; `FINCODE_TEST_DATABASE_URL`을 폐기 가능한 PostgreSQL에 설정한 뒤 `python -m unittest discover -s backend/tests -v`. 실제 HWP는 선택 변수 `FINCODE_HWP_TEST_FILE`에 별도 로컬 파일을 지정한다.
 - 테스트에는 실제 저장된 원문과 모델 입력 일치, 시나리오 수정 후 기존 입력 보존, 정상 평가 입력 보호, 한도·실패·취소·동시 업로드, 직접/간접 분리, 이모지·비가시 문자·HTML 안전 표시를 포함한다.
 - Docker 빌드와 실제 S3 입출력은 이 환경에서 검증하지 않았다. Docker에는 Tesseract 한국어·영어와 Poppler를 설치하도록 추가했다. 운영 반영 전에 Bucket 설정, Docker 빌드, migration 007, 실제 소량 업로드를 확인해야 한다.
 - `pyhwp==0.1b15`의 라이선스는 AGPL-3.0-or-later이며 설치 패키지의 COPYING에 포함된다. 추출기는 이 라이브러리를 사용한다. 의존성과 배포 구성 검토 시 이 항목을 포함한다.
+
+## 추가 재검증 — 2026-11-11
+
+- 비정상적으로 긴 `Content-Length` 헤더가 500을 발생시키던 문제를 수정했다. 큰 숫자는 정수 변환 없이 413으로 거절하며, 선행 0이 많은 정상 크기도 처리한다.
+- 이메일 본문의 표시 글자 수를 코드포인트 기준으로 통일했다. HTML maxlength의 UTF-16 단위 잘림을 제거하고, 30,000자를 넘으면 원문을 보존하면서 오류 표시·실행 차단을 한다.
+- 수정 후 JavaScript 149/149, Python 166/166, 웹 빌드와 정적 자산 일치 검사를 다시 통과했다. 실제 HWP 2개와 PNG/JPEG/스캔 PDF 추출도 재확인했다.
+- 폐기 가능한 PostgreSQL 16.2에서 001–006 스키마에 합성 기존 데이터를 채운 뒤 007을 적용하고 재실행했다. 기존 13개 테이블·17개 행의 기존 필드가 모두 보존됐고, 기존 첨부의 3개 상태 및 새 기본값, 새 연결과 제약 7종, DB health를 확인했다.
+- 실제 S3·Docker 실행·유료 모델 호출은 여전히 미검증이며 운영 DB와 main은 변경하지 않았다.

@@ -153,6 +153,21 @@ class UploadTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 400, response.text)
         self.assertFalse(self.rows)
 
+    async def test_extremely_long_content_length_is_bounded_without_integer_conversion(self):
+        for length in ('9' * 5000, '0' * 5000 + str(MAX_REQUEST_BYTES + 1)):
+            response = await self.client.post('/api/attachments', content=b'', headers={
+                'Content-Type': 'multipart/form-data; boundary=x', 'Content-Length': length})
+            self.assertEqual(response.status_code, 413, response.text)
+            self.assertEqual(response.json()['error']['code'], 'UPLOAD_TOO_LARGE')
+        self.assertFalse(self.rows)
+        self.assertFalse(self.storage.objects)
+
+        body = b'--x\r\nContent-Disposition: form-data; name="file"; filename="test.txt"\r\n\r\ntext\r\n--x--\r\n'
+        response = await self.client.post('/api/attachments', content=body, headers={
+            'Content-Type': 'multipart/form-data; boundary=x',
+            'Content-Length': '0' * 5000 + str(len(body))})
+        self.assertEqual(response.status_code, 201, response.text)
+
     async def test_extraction_failure_does_not_store_original(self):
         from backend.attachment_extract import AttachmentExtractionError
 

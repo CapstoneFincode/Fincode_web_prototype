@@ -355,7 +355,12 @@ def install_routes(app, persistence, *, storage=None, extractor=None):
         if length is not None:
             if not length.isascii() or not length.isdecimal():
                 raise error('요청 크기가 올바르지 않습니다.')
-            if int(length) > MAX_REQUEST_BYTES:
+            # Compare decimal strings so an arbitrarily long header cannot
+            # trigger Python's integer conversion limit and become a 500.
+            normalized_length = length.lstrip('0') or '0'
+            maximum_length = str(MAX_REQUEST_BYTES)
+            if (len(normalized_length) > len(maximum_length)
+                    or (len(normalized_length) == len(maximum_length) and normalized_length > maximum_length)):
                 raise error('파일은 10 MiB 이하여야 합니다.', 413, 'UPLOAD_TOO_LARGE')
 
         async def bounded_stream():
