@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import threading
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -124,6 +125,23 @@ class UploadTest(unittest.IsolatedAsyncioTestCase):
         response = await self.upload(headers={'Origin': 'https://other.example'})
         self.assertEqual(response.status_code, 403)
         self.assertFalse(self.rows)
+
+    async def test_invalid_s3_url_style_disables_upload_without_server_error(self):
+        environment = {'FINCODE_ATTACHMENT_STORAGE': 's3',
+                       'FINCODE_ATTACHMENT_S3_ENDPOINT': 'https://storage.example',
+                       'FINCODE_ATTACHMENT_S3_BUCKET': 'private-bucket',
+                       'FINCODE_ATTACHMENT_S3_ACCESS_KEY_ID': 'test-access',
+                       'FINCODE_ATTACHMENT_S3_SECRET_ACCESS_KEY': 'test-secret'}
+        for style in ('unsupported', 'virtual-host', ''):
+            with self.subTest(style=style), patch.dict(os.environ, {
+                    **environment, 'FINCODE_ATTACHMENT_S3_URL_STYLE': style}, clear=True), patch('boto3.client') as factory:
+                app, service = app_for(SimpleNamespace(db=object()), None, lambda *_: extracted())
+                self.assertFalse(service.capabilities()['enabled'])
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+                    response = await client.post('/api/attachments', files={'file': ('probe.txt', b'text')})
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertEqual(response.json()['error']['code'], 'ATTACHMENTS_NOT_CONFIGURED')
+                factory.assert_not_called()
 
     async def test_size_limits_cover_declared_stream_and_actual_file(self):
         response = await self.client.post('/api/attachments', content=b'', headers={
@@ -295,6 +313,32 @@ class AttachmentHelpersTest(unittest.TestCase):
             self.assertNotIn('ACL', captured)
             self.assertEqual(factory.call_args.kwargs['endpoint_url'], 'https://storage.example')
             self.assertEqual(factory.call_args.kwargs['config'].signature_version, 's3v4')
+
+    def test_s3_url_style_selects_actual_client_addressing_and_keeps_legacy_default(self):
+        environment = {'FINCODE_ATTACHMENT_STORAGE': 's3',
+                       'FINCODE_ATTACHMENT_S3_ENDPOINT': 'https://storage.example',
+                       'FINCODE_ATTACHMENT_S3_BUCKET': 'private-bucket',
+                       'FINCODE_ATTACHMENT_S3_ACCESS_KEY_ID': 'test-access',
+                       'FINCODE_ATTACHMENT_S3_SECRET_ACCESS_KEY': 'test-secret'}
+        for value, expected in ((None, 'path'), ('path', 'path'), ('virtual', 'virtual'), ('auto', 'auto'), (' VIRTUAL ', 'virtual')):
+            selected = {} if value is None else {'FINCODE_ATTACHMENT_S3_URL_STYLE': value}
+            with self.subTest(style=value), patch.dict(os.environ, {**environment, **selected}, clear=True):
+                storage = storage_from_env()
+                self.assertIsInstance(storage, S3Storage)
+                try:
+                    self.assertEqual(storage.client.meta.config.s3['addressing_style'], expected)
+                    # Presigning is offline, but exercises the actual botocore
+                    # endpoint selection instead of a mocked client factory.
+                    url = urlsplit(storage.client.generate_presigned_url('get_object', Params={
+                        'Bucket': 'private-bucket', 'Key': 'probe.txt'}, ExpiresIn=60))
+                    if expected == 'virtual':
+                        self.assertEqual(url.hostname, 'private-bucket.storage.example')
+                        self.assertEqual(url.path, '/probe.txt')
+                    elif expected == 'path':
+                        self.assertEqual(url.hostname, 'storage.example')
+                        self.assertEqual(url.path, '/private-bucket/probe.txt')
+                finally:
+                    storage.client.close()
 
 
 URL = os.environ.get('FINCODE_TEST_DATABASE_URL')

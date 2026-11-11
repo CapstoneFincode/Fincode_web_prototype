@@ -161,14 +161,16 @@ class LocalStorage:
 class S3Storage:
     backend = 's3'
 
-    def __init__(self, endpoint, bucket, access_key, secret_key, region='auto'):
+    def __init__(self, endpoint, bucket, access_key, secret_key, region='auto', url_style='path'):
+        if url_style not in ('path', 'virtual', 'auto'):
+            raise ValueError('Unsupported S3 URL style')
         import boto3
         from botocore.config import Config
         self.bucket = bucket
         self.client = boto3.client('s3', endpoint_url=endpoint, region_name=region,
                                   aws_access_key_id=access_key, aws_secret_access_key=secret_key,
                                   config=Config(signature_version='s3v4', connect_timeout=5, read_timeout=20,
-                                                retries={'total_max_attempts': 2}, s3={'addressing_style': 'path'}))
+                                                retries={'total_max_attempts': 2}, s3={'addressing_style': url_style}))
 
     def put(self, path, key, media_type, sha256):
         with open(path, 'rb') as source:
@@ -195,7 +197,8 @@ def storage_from_env():
             endpoint = urlsplit(values[0])
             if endpoint.scheme != 'https' or not endpoint.hostname or endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
                 return None
-            return S3Storage(*values, region=os.environ.get('FINCODE_ATTACHMENT_S3_REGION', 'auto'))
+            return S3Storage(*values, region=os.environ.get('FINCODE_ATTACHMENT_S3_REGION', 'auto'),
+                             url_style=os.environ.get('FINCODE_ATTACHMENT_S3_URL_STYLE', 'path').strip().lower())
         except (ValueError, ImportError):
             return None
     return None

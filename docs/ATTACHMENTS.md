@@ -44,6 +44,8 @@
 
 환경변수는 `.env.example`을 참고한다. 운영에 추가할 항목은 `FINCODE_ATTACHMENT_STORAGE=s3`, `FINCODE_ATTACHMENT_S3_ENDPOINT`, `FINCODE_ATTACHMENT_S3_BUCKET`, `FINCODE_ATTACHMENT_S3_ACCESS_KEY_ID`, `FINCODE_ATTACHMENT_S3_SECRET_ACCESS_KEY`, 선택 사항인 `FINCODE_ATTACHMENT_S3_REGION`이다. 키는 서버 환경변수에만 둔다.
 
+`FINCODE_ATTACHMENT_S3_URL_STYLE`은 Bucket에 맞춰 `path`, `virtual`, `auto` 중 하나로 설정한다. 미설정 시 기존 저장소와의 호환성을 위해 `path`를 유지한다. 신규 Railway Bucket의 자격증명에 `urlStyle=virtual-host`가 표시되면 이 설정에는 `virtual`을 사용하고, endpoint에는 Bucket 이름을 붙이지 않은 제공된 기본 HTTPS 주소를 넣는다. 지원하지 않는 값은 업로드 설정을 비활성화하며 기존 본문 요약은 유지한다. 설정 완료 표시는 실제 저장소 연결 검사를 대신하지 않으므로 소량 업로드로 확인한다.
+
 ## 검증 및 운영 반영 전 확인
 
 - 최신 main 통합 후 JavaScript 149/149, Python 166/166 통과. Python은 임시 네이티브 PostgreSQL 16.2와 실제 HWP fixture를 포함하며 skip이 없다.
