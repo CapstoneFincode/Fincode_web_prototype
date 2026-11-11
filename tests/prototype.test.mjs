@@ -140,5 +140,5 @@ test('configured DB outage stays explicit and cannot present the local experimen
 });
 test('DB records and experiment names are escaped in results',()=>{
   const a=app();Object.assign(a.state,{dbConfigured:true,dbReady:true,jobs:[{id:'x',name:'<img src=x>',purpose:'attack',status:'completed',finished:1,total:1}]});
-  assert.match(a.pages.results(),/웹에서 실행한 DB 실험/);assert.match(a.pages.results(),/&lt;img src=x&gt;/);assert.doesNotMatch(a.pages.results(),/<img src=x>/);
+  assert.match(a.pages.results(),/웹에서 진행한 실험/);assert.match(a.pages.results(),/&lt;img src=x&gt;/);assert.doesNotMatch(a.pages.results(),/<img src=x>/);
 });

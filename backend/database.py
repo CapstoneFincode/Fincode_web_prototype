@@ -540,6 +540,14 @@ class Database:
                 FROM experiments e LEFT JOIN experiment_cases c ON c.experiment_id=e.id LEFT JOIN runs r ON r.experiment_case_id=c.id
                 GROUP BY e.id ORDER BY e.created_at DESC LIMIT 100''').fetchall()
 
+    def experiment_page(self, page=1, page_size=5, purpose=None, vector='all', model=None, provider=None):
+        from backend.results import experiment_page
+        return experiment_page(self, page, page_size, purpose, vector, model, provider)
+
+    def model_results(self, purpose='attack', vector='all'):
+        from backend.results import model_results
+        return model_results(self, purpose, vector)
+
     def detail(self,eid):
         with self.connect() as conn:
             e=conn.execute('SELECT * FROM experiments WHERE id=%s',(uuid(eid),)).fetchone()

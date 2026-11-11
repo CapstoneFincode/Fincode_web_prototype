@@ -57,6 +57,7 @@ const state={route:'overview',group:5,tab:'normal',query:'',filter:'all',resultM
 Object.assign(state,{categories:saved?.categories||structuredClone(categorySeeds),vectorIds:['direct','indirect'],categoryIds:['direct:instruction-override','direct:role-spoofing','indirect:instruction-override','indirect:role-spoofing'],categoryCounts:Object.create(null),categoryFilter:'all',categoryQuery:'',dataSort:'default',dbCategorySupport:false,dbCategoryScopeSupport:false,dbKind:'attack',dbNormalRepeat:1});
 const localData={normal:state.normal,attacks:state.attacks,categories:state.categories};
 Object.assign(state,{dbChecked:false,dbConfigured:false,dbReady:false,dbError:"",jobs:[],jobSubmitting:false});
+Object.assign(state,{jobPage:1,jobTotal:0,jobPages:1,jobLoading:false,jobError:'',jobRequest:0,jobFilter:null,jobActive:0,resultReport:{purpose:'attack',vector:'all',model:'all',data:null,loading:false,error:'',request:0}});
 Object.assign(state,{liveModel:'',models:[],connection:'idle',connectionError:'',configured:false,running:false,emailError:null,lastLiveResult:null});
 Object.assign(state,{evaluationMenuOpen:false,comparisonDraft:{models:['',''],defense:'off'},singleEvaluationDraft:{model:'',defense:'off'}});
 Object.assign(state,{attachmentsSupported:false,attachmentDraft:null});
@@ -79,7 +80,13 @@ function toast(message){const el=$('#toast');el.textContent=message;el.classList
 function modal(title,body,actions='',className=''){closeAttachmentDraft();const d=$('#modal');d.className=className;d.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2><button class="icon-button" data-action="close-modal" aria-label="닫기">${icon('close')}</button></div><div class="dialog-body">${body}</div>${actions?`<div class="dialog-actions">${actions}</div>`:''}`;d.showModal();}
 function download(name,content,type='application/json'){const b=new Blob([content],{type});const url=URL.createObjectURL(b);const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
 function exportData(){download('fincode-data.json',JSON.stringify({schemaVersion:1,exportedAt:new Date().toISOString(),normal:state.normal,attacks:state.attacks,categories:state.categories,plans:state.plans,notes:state.notes},null,2));toast('이 브라우저의 데이터를 JSON으로 내보냈어요.');}
-function exportCSV(){const rows=filteredResults();const headers=['date','model','attack_types','attempts','successes','asr_percent','source','review_note'];const line=r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',');download('fincode-historical-results.csv','\ufeff'+[line(headers),...rows.map(r=>line([r.date,r.model,r.types,r.attempts,r.successes,r.asr,r.source,r.reviewNote]))].join('\r\n'),'text/csv;charset=utf-8');}
+function resultCsvCell(value){let text=String(value??'');if(/^[\s]*[=+@-]|^[\t\r\n]/.test(text))text="'"+text;return '"'+text.replace(/"/g,'""')+'"';}
+function exportCSV(){
+  const report=state.resultReport,rows=liveResultRows();if(report.loading||report.error||!rows.length)return toast('내보낼 모델별 결과를 먼저 불러와 주세요.');
+  const headers=['purpose','vector','defense','provider','requested_model','returned_models','experiments','runs','succeeded','errors','queued','running','cancelled','attack_successes','attack_failures','indeterminate','unjudged','judged','asr_percent','mean_service_latency_ms','latency_reported_count','mean_input_tokens','input_reported_count','mean_output_tokens','output_reported_count','mean_total_tokens','total_reported_count','graded_count','mean_rouge_l','scenario_count','scenario_version_count','prompt_versions','input_modes','evaluator_versions','first_run','last_run','generated_at'];
+  const values=rows.map(r=>[report.purpose,report.purpose==='attack'?report.vector:'all','off',r.provider,r.model,(r.returnedModels||[]).join(' / '),r.experiments,r.total,r.succeeded,r.errors,r.queued,r.running,r.cancelled,r.attack?.successes,r.attack?.failures,r.attack?.indeterminate,r.attack?.unjudged,r.attack?.judged,r.attack?.asr,r.latencyMsMean,r.latencyReportedCount,r.tokens?.inputMean,r.tokens?.inputReportedCount,r.tokens?.outputMean,r.tokens?.outputReportedCount,r.tokens?.totalMean,r.tokens?.totalReportedCount,r.quality?.gradedCount,r.quality?.meanRougeL,r.scenarioCount,r.scenarioVersionCount,(r.promptVersions||[]).join(' / '),(r.inputModes||[]).join(' / '),(r.evaluatorVersions||[]).join(' / '),r.firstRunAt,r.lastRunAt,report.data.generatedAt]);
+  download('fincode-model-results-'+report.purpose+'.csv','\ufeff'+[headers,...values].map(row=>row.map(resultCsvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+}
 const navs=[['overview','grid','대시보드'],['evaluation','layers','성능 평가'],['experiments','flask','공격 실험'],['data','database','데이터 관리'],['results','chart','실험 결과']];
 const evaluationRoutes=['email','single-evaluation','comparison'];
 const routeTitles={overview:'대시보드',email:'이메일 요약기','single-evaluation':'단일 모델 성능 평가',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 결과',settings:'연동 및 개발 현황'};
@@ -95,7 +102,7 @@ function toggleEvaluationMenu(){
 function shell(){const route=state.route;$('#app').innerHTML=`
   <aside class="sidebar" aria-label="주 메뉴">
     <a class="brand" href="#overview" aria-label="핀코드 대시보드"><div class="brandmark">F</div><div class="brand-name">fincode<span class="brand-sub">LLM SECURITY LAB</span></div></a>
-    <div class="nav-label">WORKSPACE</div><nav class="nav">${navs.map(([id,ic,title])=>id==='evaluation'?evaluationNavigation():`<a href="#${id}" class="${route===id?'active':''}" ${route===id?'aria-current="page"':''}>${icon(ic)}${title}${id==='results'?'<span class="nav-count">6</span>':''}</a>`).join('')}</nav>
+    <div class="nav-label">WORKSPACE</div><nav class="nav">${navs.map(([id,ic,title])=>id==='evaluation'?evaluationNavigation():`<a href="#${id}" class="${route===id?'active':''}" ${route===id?'aria-current="page"':''}>${icon(ic)}${title}</a>`).join('')}</nav>
     <div class="nav-label" style="margin-top:29px">MANAGEMENT</div><nav class="nav"><a href="#settings" class="${route==='settings'?'active':''}" ${route==='settings'?'aria-current="page"':''}>${icon('settings')}연동 및 개발 현황</a></nav>
     <div class="side-bottom"><a href="#settings"><div class="side-status"><div class="status-line" data-connection>${connectionMarkup()}</div><p>이메일 요약 API · 방어 실험 준비</p></div></a><div class="profile"><div class="avatar">FC</div><div><strong>팀 핀코드</strong><small>한림대학교 · Capstone 2026</small></div></div></div>
   </aside><button class="mobile-shade" data-action="menu" aria-label="메뉴 닫기"></button>
@@ -421,13 +428,73 @@ function refreshDataView(){
 function dataTable(){const normal=state.tab==='normal';const rows=filteredData();return `<div class="table-wrap"><table><thead><tr><th>${normal?'원문 제목':'시나리오 이름'}</th><th>${normal?'기준 요약':'카테고리'}</th><th>${normal?'핵심 정보':'공격 경로'}</th><th>상태</th><th>관리</th></tr></thead><tbody>${rows.map(r=>`<tr><td><div class="dataset-title">${esc(normal?r.title:r.name)}<small>${esc(r.id)}</small></div></td><td>${normal?tag(r.reference?'등록됨':'미등록',r.reference?'blue':''):tag(categoryName(categoryFor(r)),'blue')}</td><td>${normal?`${r.requiredFacts.length}개 항목`:`<span class="attack-path">${esc(vectorName(r.vector))}<small>${esc(channelName(r.channel))}</small></span>`}</td><td>${r.provenance==='sample'?tag('UI 예시'):normal?tag(r.reviewStatus==='reviewed'?'검토 완료':'검토 대기',r.reviewStatus==='reviewed'?'green':'amber'):tag(r.enabled?'사용 중':'비활성',r.enabled?'green':'')}${!normal&&r.channel==='attachment'?tag(categoryGroups(state.categories,[r]).some(c=>c.runnable)?'첨부파일 연결됨':'파일 연결 필요',categoryGroups(state.categories,[r]).some(c=>c.runnable)?'green':'amber'):''}</td><td><button class="btn text" data-action="record-detail" data-id="${esc(r.id)}">상세 ${icon('chevron')}</button></td></tr>`).join('')||`<tr><td colspan="5" class="empty-table"><div class="empty-category-icon">${icon('layers')}</div><strong>${normal?'조건에 맞는 이메일이 없어요.':state.filter==='none'?'공격 경로를 선택해 주세요.':'조건에 맞는 공격이 없어요.'}</strong><p>${normal?'검색어와 필터를 확인해 주세요.':state.filter==='none'?'위에서 직접 인젝션 또는 간접 인젝션을 선택하면 시나리오를 볼 수 있어요.':'선택한 경로·카테고리와 검색어를 확인해 주세요.'}</p>${normal||state.filter==='none'?'':'<button class="btn" data-action="add-record">공격 추가</button>'}</td></tr>`}</tbody></table></div><div class="table-footer"><span>${rows.length}건 표시 · 전체 ${normal?state.normal.length:state.attacks.length}건</span><span>${state.dbReady?'PostgreSQL 저장 · 버전 보관':'브라우저 저장'}</span></div>`;}
 
 function filteredResults(){return historicalRuns.filter(r=>(state.resultModel==='all'||r.model===state.resultModel)&&(state.resultGroup==='all'||r.types===Number(state.resultGroup)));}
-function resultsPage(){return databaseResultsPanel()+ head('EXPERIMENT RESULTS','실험 결과','자동 판정과 검토 의견을 구분하고, 원본 실험 기록을 확인하세요.',`<button class="btn" data-action="export-results">${icon('download')}CSV 내보내기</button>`)+
- notice('아래 수치는 <strong>2026년 9월 30일 팀 발표자료</strong>에서 가져온 기록이에요. 현재 웹에서 재실행한 결과가 아니며, 방어 전후 비교 데이터는 아직 없어요.')+
- `<div class="grid-main"><section class="panel"><div class="panel-head"><div><h2>기존 실험 ASR 비교</h2><p>모델명은 발표자료의 표기를 그대로 사용</p></div><div class="segment"><button data-action="chart-group" data-group="3" class="${state.group===3?'active':''}" aria-pressed="${state.group===3}">기본 3종</button><button data-action="chart-group" data-group="5" class="${state.group===5?'active':''}" aria-pressed="${state.group===5}">확장 5종</button></div></div><div class="chart">${chart(state.group)}</div><div class="chart-note">${icon('info')}시도 수와 공격 구성이 다르므로 단순 모델 순위로 해석하지 않아요.</div></section><section class="panel"><div class="panel-head"><h2>자동 판정 재검토</h2>${tag('DeepSeek · 확장','amber')}</div><div class="body-pad" style="padding-top:0"><div class="config-row"><span>기존 자동 판정</span><strong style="font-size:26px">61.22<small>%</small></strong></div><div class="config-row"><span>팀 재검토 추정</span><strong style="font-size:26px;color:var(--orange)">53.06<small>%</small></strong></div><p class="muted" style="font-size:11px;margin-top:13px;line-height:1.9">성공 판정 30건 중 4건에 대해 팀이 이견을 제시했어요. 26/49를 적용한 추정치이며, 자동 판정을 수정한 확정 결과는 아니에요.</p></div></section></div>
- <div class="toolbar"><h2>원본 실험 기록</h2><div class="actions"><label class="screen-reader" for="result-model">모델 필터</label><select id="result-model"><option value="all">모든 모델</option>${modelOptions(state.resultModel)}</select><label class="screen-reader" for="result-group">공격 구성 필터</label><select id="result-group">${[['all','모든 공격 구성'],['3','기본 3종'],['5','확장 5종']].map(([v,t])=>`<option value="${v}" ${state.resultGroup===v?'selected':''}>${t}</option>`).join('')}</select></div></div><section class="panel" id="result-table">${historyTable(filteredResults())}</section>
- <section class="panel" style="margin-top:22px"><div class="panel-head"><h2>방어 전후 비교 지표</h2>${tag('방어 실험 구현 후 측정')}</div><div class="body-pad" style="padding-top:0"><div class="metric-strip" style="grid-template-columns:repeat(4,1fr);border:0"><div>정상 입력 오탐률<strong>—</strong><small>FPR</small></div><div>요약 품질 변화<strong>—</strong><small>Ground Truth 기준</small></div><div>토큰 사용량 변화<strong>—</strong><small>입력 / 출력 토큰</small></div><div>응답시간 변화<strong>—</strong><small>방어 전 / 후</small></div></div></div></section>`;}
+const resultPurposeLabels={attack:'공격 실험',summary:'이메일 요약',normal:'정상 응답 확인',performance:'성능 평가'};
+const resultNumber=(value,digits=0)=>Number.isFinite(value)?value.toLocaleString('ko-KR',{maximumFractionDigits:digits,minimumFractionDigits:digits}):'—';
+function resultDate(value){const date=new Date(value);return value&&Number.isFinite(date.getTime())?date.toLocaleString('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'—';}
+function liveResultRows(){const report=state.resultReport;return (report.data?.models||[]).filter(row=>report.model==='all'||row.model===report.model);}
+function resultsPage(){
+  return head('EXPERIMENT RESULTS','실험 결과','웹에서 진행한 실험을 확인하고, 실제 실행 데이터를 모델별로 비교하세요.')+
+    databaseResultsPanel()+`<section class="panel results-filter-panel"><div class="panel-head"><div><h2>모델별 비교 조건</h2><p>실험 종류별로 지표를 나누어 확인하세요.</p></div>${tag('방어 OFF','blue')}</div><div class="panel-body"><div class="results-purpose-tabs" role="group" aria-label="비교할 실험 종류">${Object.entries(resultPurposeLabels).map(([id,label])=>`<button class="${state.resultReport.purpose===id?'active':''}" data-action="results-purpose" data-purpose="${id}" aria-pressed="${state.resultReport.purpose===id}">${label}</button>`).join('')}</div><div class="results-filter-row"><label for="live-result-vector">공격 경로<select id="live-result-vector" ${state.resultReport.purpose==='attack'?'':'disabled'}>${[['all','전체 경로'],['direct','직접 인젝션'],['indirect','간접 인젝션']].map(([value,label])=>`<option value="${value}" ${state.resultReport.vector===value?'selected':''}>${label}</option>`).join('')}</select></label><label for="live-result-model">모델<select id="live-result-model">${resultModelOptions()}</select></label><button class="btn" data-action="results-refresh" ${state.dbReady?'':'disabled'}>${icon('clock')}지표 새로고침</button></div></div></section><div id="live-results-content">${liveResultsContent()}</div>`+
+    `<section class="panel results-defense-placeholder"><div class="panel-head"><div><h2>방어 전후 비교 지표</h2><p>방어 기법을 적용한 뒤, 같은 조건에서 품질·오차단·토큰·응답시간 변화를 비교할 예정이에요.</p></div>${tag('구현 예정')}</div></section>`;
+}
+function resultModelOptions(){return '<option value="all">모든 모델</option>'+[...new Map((state.resultReport.data?.models||[]).map(row=>[row.model,row])).values()].map(row=>`<option value="${esc(row.model)}" ${state.resultReport.model===row.model?'selected':''}>${esc(row.model)}</option>`).join('');}
+function resultEmpty(title,description,kind=''){return `<section class="panel results-empty ${kind}" ${kind==='error'?'role="alert"':'role="status"'}>${icon(kind==='error'?'info':'chart')}<h2>${title}</h2><p>${description}</p>${kind==='error'?'<button class="btn" data-action="results-refresh">다시 불러오기</button>':''}</section>`;}
+function liveResultsContent(){
+  const report=state.resultReport;
+  if(!state.dbReady)return resultEmpty(state.dbChecked?'실험 데이터 연결이 필요해요.':'실험 데이터를 확인하고 있어요.',esc(state.dbError||'서버 연결 후 저장된 실험 결과를 확인할 수 있어요.'));
+  if(report.error)return resultEmpty('지표를 불러오지 못했어요.',esc(report.error),'error');
+  if(!report.data)return resultEmpty('모델별 지표를 불러오는 중이에요.','저장된 실제 실행 결과를 집계하고 있어요.');
+  const rows=liveResultRows();
+  if(!rows.length)return resultEmpty('선택한 조건의 실험 기록이 없어요.','실험을 실행하거나 다른 실험 종류·공격 경로·모델을 선택해 주세요.');
+  const total=rows.reduce((sum,r)=>sum+r.total,0),completed=rows.reduce((sum,r)=>sum+r.succeeded,0),errors=rows.reduce((sum,r)=>sum+r.errors,0);
+  const attack=report.purpose==='attack',quality=report.purpose==='performance';
+  const known=rows.reduce((sum,r)=>sum+(attack?r.attack?.judged||0:quality?r.quality?.gradedCount||0:r.latencyReportedCount||0),0);
+  return `<div class="results-updated" role="status"><span>${icon('database')}저장된 전체 기록 기준 · ${esc(resultPurposeLabels[report.purpose])} · 방어 OFF</span><span>${report.loading?'갱신 중…':esc(resultDate(report.data.generatedAt))+' 갱신'}</span></div><div class="stats results-stats">${stat('비교 모델',resultNumber(rows.length),'개','layers','선택한 실험 조건 기준')}${stat('전체 실행',resultNumber(total),'건','flask',`실행 오류 ${resultNumber(errors)}건 포함`)}${stat('응답 완료',resultNumber(completed),'건','check','오류·대기·취소와 구분')}${stat(attack?'확정 판정':quality?'자동 채점 완료':'응답시간 측정',resultNumber(known),'건','chart',attack?'성공 + 실패 판정':quality?'기준 정답과 비교한 응답':'값이 기록된 정상 완료 응답')}</div>
+    <div class="results-comparison-grid"><section class="panel"><div class="panel-head"><div><h2>${attack?'모델별 공격 성공률':quality?'모델별 요약 유사도':'모델별 평균 응답시간'}</h2><p>${attack?'성공 ÷ (성공 + 실패) · 확정 판정만 집계':quality?'ROUGE-L F1 · 채점 완료 응답의 평균':'정상 완료 응답의 모델 호출 시간'}</p></div>${tag(attack?'ASR · %':quality?'ROUGE-L · 0–1':'초')}</div><div class="results-bars">${resultBars(rows)}</div><p class="results-method-note">${attack?'미확정·미판정·실행 오류는 성공률 분모에서 제외해요.':quality?'유사도는 사실 정확도가 아니에요. 이메일 구성과 채점 버전이 같은 평가끼리 비교해 주세요.':'입력 길이와 첨부파일 구성에 따라 시간과 사용량이 달라질 수 있어요.'}</p></section><section class="panel results-reading"><div class="panel-head"><h2>지표 읽는 방법</h2></div><div class="panel-body"><div class="results-reading-item"><span>01</span><div><strong>같은 조건끼리 비교</strong><p>시나리오·실행 횟수·입력 방식·판정 버전이 다를 수 있어요. 아래 모델별 조건을 함께 확인해 주세요.</p></div></div><div class="results-reading-item"><span>02</span><div><strong>기록이 없는 값은 —</strong><p>누락된 시간·토큰을 0으로 계산하지 않아요. 각 평균 아래에 실제 측정 건수를 표시해요.</p></div></div><div class="results-reading-item"><span>03</span><div><strong>실행 오류와 공격 실패 구분</strong><p>요청 오류는 공격 실패 판정에 포함하지 않아요. 수동 검토가 있으면 최신 수동 판정을 우선해요.</p></div></div></div></section></div>
+    <section class="panel results-model-panel"><div class="panel-head"><div><h2>모델 별 실험 기록</h2><p>요청한 모델 기준 · 정상 완료 응답의 시간·토큰 평균</p></div><button class="btn" data-action="export-results" ${report.loading?'disabled':''}>${icon('download')}CSV 내보내기</button></div>${resultModelTable(rows)}</section>`;
+}
+function resultBars(rows){
+  const purpose=state.resultReport.purpose,attack=purpose==='attack',quality=purpose==='performance';
+  const values=rows.map(row=>attack?row.attack?.asr:quality?row.quality?.meanRougeL:row.latencyMsMean);
+  const maximum=attack?100:quality?1:Math.max(1,...values.filter(Number.isFinite));
+  return rows.map((row,index)=>{const value=values[index],known=Number.isFinite(value),width=known?Math.max(0,Math.min(100,value/maximum*100)):0;
+    const label=known?(attack?resultNumber(value,1)+'%':quality?resultNumber(value,3):resultNumber(value/1000,2)+'초'):'—';
+    const count=attack?`${resultNumber(row.attack?.successes)} 성공 / ${resultNumber(row.attack?.judged)} 확정`:quality?`${resultNumber(row.quality?.gradedCount)}건 채점`:`${resultNumber(row.latencyReportedCount)}건 측정`;
+    return `<div class="results-bar-row"><div class="results-bar-label"><strong>${esc(row.model)}${row.provider?' · '+esc(row.provider):''}</strong><span>${label}</span></div><div class="results-bar-track" aria-hidden="true"><span style="width:${width}%"></span></div><small>${count}${known?'':' · 산출 전'}</small></div>`;
+  }).join('');
+}
+function resultConditions(row){
+  const list=(items)=>items?.length?items.map(esc).join(' · '):'기록 없음';
+  return `<details class="results-conditions"><summary>실험 조건 보기</summary><dl><dt>실제 응답 모델</dt><dd>${list(row.returnedModels)}</dd><dt>시나리오 / 버전</dt><dd>${resultNumber(row.scenarioCount)}개 / ${resultNumber(row.scenarioVersionCount)}개</dd><dt>추론 설정</dt><dd>${resultNumber(row.inferenceSettingsCount)}종</dd><dt>요약 지침</dt><dd>${list(row.promptVersions)}</dd><dt>입력 방식</dt><dd>${list(row.inputModes)}</dd><dt>판정 버전</dt><dd>${list(row.evaluatorVersions)}</dd><dt>최초 실행</dt><dd>${esc(resultDate(row.firstRunAt))}</dd></dl></details>`;
+}
+function resultModelTable(rows){
+  const purpose=state.resultReport.purpose,attack=purpose==='attack',quality=purpose==='performance';
+  return `<div class="table-wrap"><table class="results-model-table"><thead><tr><th scope="col">모델 / 조건</th><th scope="col">실험 / 실행</th><th scope="col">${attack?'공격 판정':quality?'요약 유사도':'응답 상태'}</th><th scope="col">평균 응답시간</th><th scope="col">평균 입력 / 출력 토큰</th><th scope="col">평균 전체 토큰</th><th scope="col">최근 실행</th></tr></thead><tbody>${rows.map(row=>`<tr><th scope="row"><strong class="results-model-name">${esc(row.model)}</strong><span class="results-model-provider">${esc(row.provider||'제공자 미기록')}</span>${resultConditions(row)}<button class="btn text" data-action="results-model-history" data-model="${esc(row.model)}" data-provider="${esc(row.provider||'')}">실험 기록 보기 ${icon('arrow')}</button></th><td><strong>${resultNumber(row.experiments)}개 / ${resultNumber(row.total)}건</strong><small>응답 완료 ${resultNumber(row.succeeded)}</small><small>오류 ${resultNumber(row.errors)} · 대기 ${resultNumber(row.queued)}<br>실행 중 ${resultNumber(row.running)} · 취소 ${resultNumber(row.cancelled)}${row.blocked?` · 차단 ${resultNumber(row.blocked)}`:''}</small></td><td>${attack?`<strong class="results-score">${Number.isFinite(row.attack?.asr)?resultNumber(row.attack.asr,1)+'%':'—'}</strong><small><span class="results-success">성공 ${resultNumber(row.attack?.successes)}</span> · 실패 ${resultNumber(row.attack?.failures)}</small><small>미확정 ${resultNumber(row.attack?.indeterminate)}<br>미판정 ${resultNumber(row.attack?.unjudged)}</small>`:quality?`<strong class="results-score">${resultNumber(row.quality?.meanRougeL,3)}</strong><small>ROUGE-L F1</small><small>${resultNumber(row.quality?.gradedCount)}건 채점</small>`:`<strong>${resultNumber(row.succeeded)}건 완료</strong><small>공격 성공률 집계 대상 아님</small>`}</td><td><strong>${Number.isFinite(row.latencyMsMean)?resultNumber(row.latencyMsMean/1000,2)+'초':'—'}</strong><small>${resultNumber(row.latencyReportedCount)}건 측정</small></td><td><strong>${resultNumber(row.tokens?.inputMean,1)} / ${resultNumber(row.tokens?.outputMean,1)}</strong><small>입력 ${resultNumber(row.tokens?.inputReportedCount)}건<br>출력 ${resultNumber(row.tokens?.outputReportedCount)}건 측정</small></td><td><strong>${resultNumber(row.tokens?.totalMean,1)}</strong><small>${resultNumber(row.tokens?.totalReportedCount)}건 측정</small></td><td class="results-date">${esc(resultDate(row.lastRunAt))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function renderLiveResults(){
+  const content=$('#live-results-content');if(content)content.innerHTML=liveResultsContent();
+  const select=$('#live-result-model');if(select)select.innerHTML=resultModelOptions();
+}
+async function refreshResultMetrics({silent=false}={}){
+  if(!state.dbReady)return;const report=state.resultReport,request=++report.request;
+  const purpose=report.purpose,vector=purpose==='attack'?report.vector:'all';report.loading=true;report.error='';if(!silent)renderLiveResults();
+  try{
+    const data=await dbApi('/api/results/models?purpose='+encodeURIComponent(purpose)+'&vector='+encodeURIComponent(vector));
+    if(request!==report.request)return;
+    if(!data||data.purpose!==purpose||data.vector!==vector||data.defense!=='off'||!Array.isArray(data.models)||data.models.some(row=>typeof row.model!=='string'||!Number.isFinite(row.total)))throw new Error('모델별 결과 형식을 확인할 수 없어요.');
+    report.data=data;if(report.model!=='all'&&!data.models.some(row=>row.model===report.model))report.model='all';
+  }catch(error){if(request===report.request)report.error=error.message||'모델별 결과를 불러오지 못했어요.';}
+  finally{if(request===report.request){report.loading=false;if(state.route==='results')renderLiveResults();}}
+}
+function changeResultPurpose(purpose){if(!Object.hasOwn(resultPurposeLabels,purpose)||purpose===state.resultReport.purpose)return;Object.assign(state.resultReport,{purpose,vector:'all',model:'all',data:null,error:'',request:state.resultReport.request+1});shell();}
+async function showModelHistory(model,provider){
+  if(!(state.resultReport.data?.models||[]).some(row=>row.model===model))return;
+  state.jobFilter={model,purpose:state.resultReport.purpose,vector:state.resultReport.purpose==='attack'?state.resultReport.vector:'all'};
+  if(provider)state.jobFilter.provider=provider;state.jobs=[];
+  await refreshJobs({page:1});$('#web-experiment-history')?.scrollIntoView({behavior:'smooth',block:'start'});
+}
 function settingsPage(){return head('PROJECT STATUS','연동 및 개발 현황','현재 구현 범위와 다음 연결 지점을 확인하세요.',`<button class="btn" data-action="add-note">${icon('plus')}의사결정 기록</button>`)+connectionPanel()+
- `<div class="two-col section-space"><section class="panel"><div class="panel-head"><h2>현재 구현 범위</h2>${tag('v0.2','blue')}</div><div class="panel-body"><ul class="checklist">${[['화면 이동 · 반응형 레이아웃','구현','green'],['정상·공격 데이터 추가 및 검색',state.dbReady?'PostgreSQL 저장':'브라우저 저장','blue'],['실험 계획 작성 및 JSON 내보내기','구현','green'],['기존 실험 결과·CSV 내보내기','구현','green'],['정상 예시와 기준 요약 확인','예시 모드','blue'],['BAZE 모델 목록 · 실제 본문 요약',state.connection==='ready'?'모델 목록 확인됨':'서버 연결 확인','blue'],['토큰 사용량 · 응답시간 표시','실제 응답 기준','green']].map(([t,s,c])=>`<li>${icon('check')}${t}${tag(s,c)}</li>`).join('')}</ul></div></section><section class="panel"><div class="panel-head"><h2>다음 개발 단계</h2>${tag('연결 예정')}</div><div class="panel-body"><ul class="checklist">${[['팀 공용 DB · 실행 기록 동기화',state.dbReady?'연결됨':'DB 설정 필요'],['문서 텍스트 추출 · 이미지 OCR',state.attachmentsSupported?'사용 가능':'서버 설정 필요'],['방어 기법 2종 이상 · 자동 평가','기법 선정 전'],['자체 시나리오 DB · 공격 실행',state.dbReady?'사용 가능':'DB 설정 필요']].map(([t,s])=>`<li>${icon('clock')}${t}${tag(s)}</li>`).join('')}</ul></div></section></div>
+ `<div class="two-col section-space"><section class="panel"><div class="panel-head"><h2>현재 구현 범위</h2>${tag('v0.2','blue')}</div><div class="panel-body"><ul class="checklist">${[['화면 이동 · 반응형 레이아웃','구현','green'],['정상·공격 데이터 추가 및 검색',state.dbReady?'PostgreSQL 저장':'브라우저 저장','blue'],['실험 계획 작성 및 JSON 내보내기','구현','green'],['모델별 실험 결과·CSV 내보내기','구현','green'],['정상 예시와 기준 요약 확인','예시 모드','blue'],['BAZE 모델 목록 · 실제 본문 요약',state.connection==='ready'?'모델 목록 확인됨':'서버 연결 확인','blue'],['토큰 사용량 · 응답시간 표시','실제 응답 기준','green']].map(([t,s,c])=>`<li>${icon('check')}${t}${tag(s,c)}</li>`).join('')}</ul></div></section><section class="panel"><div class="panel-head"><h2>다음 개발 단계</h2>${tag('연결 예정')}</div><div class="panel-body"><ul class="checklist">${[['팀 공용 DB · 실행 기록 동기화',state.dbReady?'연결됨':'DB 설정 필요'],['문서 텍스트 추출 · 이미지 OCR',state.attachmentsSupported?'사용 가능':'서버 설정 필요'],['방어 기법 2종 이상 · 자동 평가','기법 선정 전'],['자체 시나리오 DB · 공격 실행',state.dbReady?'사용 가능':'DB 설정 필요']].map(([t,s])=>`<li>${icon('clock')}${t}${tag(s)}</li>`).join('')}</ul></div></section></div>
  <div class="notes-grid section-space"><section class="panel note-card"><h2>HAI-GPT · BAZE 연결 원칙</h2><p>서버 환경변수 BAZE_API_KEY로 게이트웨이를 호출해요. 키는 브라우저에 전달하거나 저장하지 않아요. 현재는 한 개의 서버 키를 사용하며, 팀 보유 키 3개의 선택·비교는 다음 단계예요.</p><div style="margin-top:15px">${tag(connectionLabel(),state.connection==='ready'?'green':'blue')}</div></section><section class="panel note-card"><h2>첨부파일 요약 · 간접 인젝션</h2><p>파일의 추출 텍스트를 확인하고 이메일 요약 또는 첨부파일 공격 시나리오에 사용해요. 암호 문서는 해제 후 업로드하고, 구형 DOC·PPT는 DOCX·PPTX로 변환해 주세요.</p><div class="format-list" style="margin-top:15px">${['TXT','PDF','PPTX','DOCX','HWP / HWPX','PNG / JPEG'].map(x=>`<span>${x}</span>`).join('')}</div></section></div>
  <section class="panel section-space"><div class="panel-head"><h2>의사결정 기록</h2><span class="muted small">선택 이유 · 대안 · 실패한 시도</span></div><div class="panel-body"><div class="plan-card"><div class="wide-label"><strong>웹 UI를 먼저 만들고 기능을 단계적으로 연결</strong>${tag('2026.10.12')}</div><p>10월 29일 중간보고에서 전체 실험 흐름을 보여주기 위한 순서. 이메일 요약기에 먼저 집중하고 다른 앱은 이후 확장.</p></div>${state.notes.map(n=>`<div class="plan-card"><div class="wide-label"><strong>${esc(n.title)}</strong>${tag(n.date.slice(0,10))}</div><p style="white-space:pre-wrap">${esc(n.body)}</p></div>`).join('')}</div></section>
  <section class="panel note-card"><h2>배포와 데이터 보관</h2><p>웹 서버가 BAZE에 이메일 요약을 요청하고 실제 측정값을 반환해요. 소스에는 서버 실행 설정과 README를 포함했어요. DB 연결 시 자체 공격 실험과 응답 기록 저장을 사용할 수 있어요. 보안 방어 비교는 방어 구현 후 실행할 수 있어요.</p><p>데이터 관리 상단에서 저장 위치를 확인해 주세요. DB 모드는 팀 공용 저장소를 사용하며 실험 계획·의사결정 메모는 브라우저에 저장돼요.</p><div class="actions" style="margin-top:17px"><button class="btn" data-action="export-data">${icon('download')}데이터 백업</button></div></section>`;}
@@ -477,16 +544,48 @@ async function submitDatabaseExperiment(){
   if(form.dataset.fingerprint!==fingerprint){form.dataset.fingerprint=fingerprint;form.dataset.requestKey=createId();}
   payload.idempotencyKey=form.dataset.requestKey;
   const button=$('[data-action="db-run"]');button.disabled=true;state.jobSubmitting=true;$('#db-submit-error').textContent='';
-  try{const result=await dbApi('/api/experiments','POST',payload);delete form.dataset.requestKey;delete form.dataset.fingerprint;await refreshJobs();toast('실험을 DB 실행 대기열에 등록했어요.');await showDatabaseExperiment(result.id);}
+  try{const result=await dbApi('/api/experiments','POST',payload);delete form.dataset.requestKey;delete form.dataset.fingerprint;state.jobFilter=null;await refreshJobs({page:1});toast('실험을 DB 실행 대기열에 등록했어요.');await showDatabaseExperiment(result.id);}
   catch(error){$('#db-submit-error').textContent=error.message;}
   finally{state.jobSubmitting=false;if(button)button.disabled=state.connection!=='ready';}
 }
 
-function databaseResultsPanel(){if(workflowPreview)return workflowHistoryPanel();if(!state.dbConfigured)return '';return `<section class="panel section-space"><div class="panel-head"><div><h2>웹에서 실행한 DB 실험</h2><p>요약 · 공격 실험 · 정상 응답 확인 / 최근 100건</p></div><button class="btn" data-action="db-refresh" ${state.dbReady?'':'disabled'}>새로고침</button></div><div id="db-job-list">${databaseJobRows()}</div></section>`;}
+function databaseResultsPanel(){
+  if(workflowPreview)return workflowHistoryPanel();
+  return `<section class="panel section-space results-history" id="web-experiment-history"><div class="panel-head"><div><h2>웹에서 진행한 실험</h2><p>이메일 요약 · 공격 실험 · 정상 응답 확인 · 성능 평가</p></div><button class="btn" data-action="db-refresh" ${state.dbReady&&!state.jobLoading?'':'disabled'}>새로고침</button></div><div id="db-job-list">${databaseJobRows()}</div></section>`;
+}
 const jobStatus=s=>({queued:'실행 대기',running:'실행 중',completed:'완료',partial:'일부 실패',failed:'실패',cancelled:'취소'}[s]||s);
-function databaseJobRows(){return `<div class="table-wrap"><table><thead><tr><th>실험 이름</th><th>종류</th><th>처리 수</th><th>상태</th><th>상세</th></tr></thead><tbody>${state.jobs.map(j=>`<tr><td>${esc(j.name)}</td><td>${esc({summary:'본문 요약',attack:'공격',normal:'정상 이메일'}[j.purpose]||j.purpose)}</td><td>${j.finished} / ${j.total}</td><td>${tag(jobStatus(j.status),j.status==='completed'?'green':'blue')}</td><td><button class="btn text" data-action="db-detail" data-id="${esc(j.id)}">결과 보기</button></td></tr>`).join('')||'<tr><td colspan="5" class="empty-table">아직 실행 기록이 없어요.</td></tr>'}</tbody></table></div>`;}
+function databaseJobRows(){
+  if(!state.dbReady)return `<div class="results-history-message" role="status">${esc(state.dbError||'서버 연결 후 실험 기록을 확인할 수 있어요.')}</div>`;
+  const filter=state.jobFilter?`<div class="results-history-filter"><span>${esc(state.jobFilter.model)} · ${esc(resultPurposeLabels[state.jobFilter.purpose])}${state.jobFilter.vector!=='all'?' · '+esc(vectorName(state.jobFilter.vector)):''}</span><button class="btn text" data-action="db-clear-filter">전체 실험 보기</button></div>`:'';
+  const message=state.jobError?`<div class="results-history-message error" role="alert">${esc(state.jobError)} <button class="btn text" data-action="db-refresh">다시 불러오기</button></div>`:state.jobLoading?'<div class="results-history-message" role="status">기록을 불러오는 중이에요…</div>':'';
+  const rows=state.jobs.slice(0,5),start=rows.length?(state.jobPage-1)*5+1:0,end=rows.length?start+rows.length-1:0;
+  return filter+message+`<div class="table-wrap"><table class="results-history-table" ${state.jobLoading?'aria-busy="true"':''}><thead><tr><th scope="col">실험 이름 / 모델</th><th scope="col">종류</th><th scope="col">실행일</th><th scope="col">처리 수</th><th scope="col">상태</th><th scope="col">상세</th></tr></thead><tbody>${rows.map(j=>`<tr><td><strong>${esc(j.name)}</strong><small>${(j.models||[]).map(esc).join(' · ')||'모델 기록 없음'}</small></td><td>${esc(resultPurposeLabels[j.purpose]||j.purpose)}</td><td class="results-date">${esc(resultDate(j.created_at))}</td><td class="mono">${resultNumber(j.finished)} / ${resultNumber(j.total)}</td><td>${tag(jobStatus(j.status),j.status==='completed'?'green':j.status==='failed'?'amber':'blue')}</td><td><button class="btn text" data-action="db-detail" data-id="${esc(j.id)}" aria-label="${esc(j.name)} 결과 보기">결과 보기 ${icon('chevron')}</button></td></tr>`).join('')||(!state.jobLoading&&!state.jobError?'<tr><td colspan="6" class="empty-table">아직 해당 조건의 실행 기록이 없어요.</td></tr>':'')}</tbody></table></div><nav class="results-pagination" aria-label="실험 기록 페이지"><span>전체 ${resultNumber(state.jobTotal)}개 중 ${start}–${end}개 · 페이지당 5개</span><div><button class="btn" data-action="db-page" data-page="${state.jobPage-1}" ${state.jobLoading||state.jobPage<=1?'disabled':''} aria-label="이전 실험 기록 페이지">이전</button><span aria-live="polite">${state.jobPage} / ${state.jobPages}</span><button class="btn" data-action="db-page" data-page="${state.jobPage+1}" ${state.jobLoading||state.jobPage>=state.jobPages?'disabled':''} aria-label="다음 실험 기록 페이지">다음</button></div></nav>`;
+}
 let jobPollTimer=null;
-async function refreshJobs(){if(!state.dbReady)return;clearTimeout(jobPollTimer);const data=await dbApi('/api/experiments');state.jobs=data.experiments;if($('#db-job-list'))$('#db-job-list').innerHTML=databaseJobRows();if(['experiments','results'].includes(state.route)&&state.jobs.some(j=>['queued','running'].includes(j.status)))jobPollTimer=setTimeout(()=>refreshJobs().catch(error=>toast(error.message)),2500);}
+function renderJobs(){if($('#db-job-list'))$('#db-job-list').innerHTML=databaseJobRows();const button=$('#web-experiment-history [data-action="db-refresh"]');if(button)button.disabled=!state.dbReady||state.jobLoading;}
+async function refreshJobs({page=state.jobPage,silent=false}={}){
+  if(!state.dbReady||!Number.isInteger(page)||page<1)return;
+  clearTimeout(jobPollTimer);const request=++state.jobRequest,changed=page!==state.jobPage;
+  state.jobPage=page;state.jobLoading=true;state.jobError='';if(changed)state.jobs=[];if(!silent)renderJobs();
+  let path='/api/experiments?page='+page+'&pageSize=5';
+  if(state.jobFilter)for(const [key,value] of Object.entries(state.jobFilter))path+='&'+encodeURIComponent(key)+'='+encodeURIComponent(value);
+  try{
+    const data=await dbApi(path);if(request!==state.jobRequest)return;
+    if(!Array.isArray(data.experiments)||data.experiments.length>5||!Number.isInteger(data.total)||data.total<0||!Number.isInteger(data.page)||data.page<1||!Number.isInteger(data.totalPages)||data.totalPages<1||data.pageSize!==5)throw new Error('실험 기록의 페이지 정보를 확인할 수 없어요.');
+    state.jobs=data.experiments;state.jobTotal=data.total;state.jobPage=data.page;state.jobPages=data.totalPages;state.jobActive=data.activeCount||0;
+  }catch(error){if(request===state.jobRequest)state.jobError=error.message||'실험 기록을 불러오지 못했어요.';}
+  finally{
+    if(request===state.jobRequest){state.jobLoading=false;renderJobs();
+      if(!state.jobError&&['experiments','results'].includes(state.route)&&state.jobActive>0)jobPollTimer=setTimeout(async()=>{await refreshJobs({silent:true});if(state.route==='results')await refreshResultMetrics({silent:true});},5000);
+    }
+  }
+}
+async function clearJobFilter(){state.jobFilter=null;state.jobs=[];await refreshJobs({page:1});}
+async function openHistoryPerformance(id){
+  const row=state.jobs.find(job=>job.id===id),mode=(row?.models?.length||1)>1?'comparison':'single';
+  location.hash=mode==='single'?'single-evaluation':'comparison';
+  await openPerformanceRun(mode,id);
+}
 function effectiveVerdict(run,metric){const all=(run.evaluations||[]).filter(x=>x.metric===metric);return all.filter(x=>x.judge_type==='human').at(-1)||all.at(-1);}
 function verdictStats(runs,metric){
   const applicable=runs.filter(r=>r.expected_label===(metric==='attack_success'?'attack':'normal'));
@@ -541,7 +640,7 @@ function attackReviewForm(run){
   return `<details class="ar-manual"><summary>수동 검토 · 판정 수정</summary><form class="db-judgment" data-run="${esc(run.id)}" data-metric="attack_success"><p>최신 수동 판정이 자동 판정보다 우선해요. 변경은 판정 이력으로 남아요.</p><div class="field"><label for="verdict-${esc(run.id)}">공격 목표를 달성했나요?</label><select id="verdict-${esc(run.id)}" name="value"><option value="" ${v?.boolean_value==null?'selected':''}>미확정</option><option value="true" ${v?.boolean_value===true?'selected':''}>공격 성공</option><option value="false" ${v?.boolean_value===false?'selected':''}>공격 실패</option></select></div><div class="field"><label for="evidence-${esc(run.id)}">판정 근거</label><textarea id="evidence-${esc(run.id)}" name="evidence" required maxlength="3000"></textarea></div><button class="btn" type="submit">수동 판정 저장</button></form></details>`;
 }
 function bindDatabaseJudgments(root,id){
-  $$('.db-judgment',root).forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const f=new FormData(form);const button=$('button',form);button.disabled=true;try{await dbApi('/api/runs/'+form.dataset.run+'/evaluations','POST',{metric:form.dataset.metric,value:f.get('value')===''?null:f.get('value')==='true',source:f.get('source'),evidence:f.get('evidence')});await showDatabaseExperiment(id);toast('판정 이력을 저장했어요.');}catch(error){toast(error.message);button.disabled=false;}}));
+  $$('.db-judgment',root).forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const f=new FormData(form);const button=$('button',form);button.disabled=true;try{await dbApi('/api/runs/'+form.dataset.run+'/evaluations','POST',{metric:form.dataset.metric,value:f.get('value')===''?null:f.get('value')==='true',source:f.get('source'),evidence:f.get('evidence')});await showDatabaseExperiment(id);if(state.route==='results')await refreshResultMetrics({silent:true});toast('판정 이력을 저장했어요.');}catch(error){toast(error.message);button.disabled=false;}}));
 }
 async function showDatabaseExperiment(id){
   try{
@@ -568,7 +667,7 @@ async function showDatabaseExperiment(id){
 }
 
 const pages={overview,email:emailPage,'single-evaluation':singleEvaluationPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,settings:settingsPage};
-function route(){stopPerformancePolling();const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
+function route(){stopPerformancePolling();clearTimeout(jobPollTimer);state.jobRequest++;state.jobLoading=false;const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
 function bindPage(){
   mountPerformance();
   if(state.route==='comparison'){
@@ -579,7 +678,8 @@ function bindPage(){
     $$('[data-single-evaluation-field]').forEach(el=>el.addEventListener('change',e=>updateSingleEvaluationDraft(el.dataset.singleEvaluationField,e.target.value)));
     $$('input[name="single-evaluation-defense"]').forEach(el=>el.addEventListener('change',e=>{if(e.target.checked)updateSingleEvaluationDraft('defense',e.target.value);}));
   }
-  if(state.dbReady&&['experiments','results'].includes(state.route))refreshJobs().catch(error=>toast(error.message));
+  if(state.dbReady&&['experiments','results'].includes(state.route))refreshJobs();
+  if(state.dbReady&&state.route==='results')refreshResultMetrics();
   if(state.route==='experiments'&&(state.dbReady||workflowPreview))$('#db-model')?.addEventListener('change',e=>{if(workflowPreview)state.model=e.target.value;else state.liveModel=e.target.value;});
   if(state.route==='experiments'&&workflowPreview)$('#db-experiment-form')?.addEventListener('submit',e=>{e.preventDefault();previewSelectedExperiment();});
   if(state.route==='email'){
@@ -617,8 +717,8 @@ function bindPage(){
     $('#import-file').addEventListener('change',async e=>{await importData(e.target.files[0]);e.target.value='';});
   }
   if(state.route==='results'){
-    $('#result-model').addEventListener('change',e=>{state.resultModel=e.target.value;$('#result-table').innerHTML=historyTable(filteredResults());});
-    $('#result-group').addEventListener('change',e=>{state.resultGroup=e.target.value;$('#result-table').innerHTML=historyTable(filteredResults());});
+    $('#live-result-model')?.addEventListener('change',e=>{state.resultReport.model=e.target.value;renderLiveResults();});
+    $('#live-result-vector')?.addEventListener('change',e=>{state.resultReport.vector=e.target.value;state.resultReport.data=null;state.resultReport.model='all';refreshResultMetrics();});
   }
 }
 function syncExperimentKind(){
@@ -1031,8 +1131,13 @@ const actions={
  'db-run':submitDatabaseExperiment,
  'workflow-preview':previewSelectedExperiment,
  'workflow-detail':el=>showWorkflowReport(el.dataset.id),
- 'db-detail':el=>showDatabaseExperiment(el.dataset.id),
- 'db-refresh':()=>refreshJobs().catch(error=>toast(error.message)),
+ 'db-detail':el=>state.jobs.find(j=>j.id===el.dataset.id)?.purpose==='performance'?openHistoryPerformance(el.dataset.id):showDatabaseExperiment(el.dataset.id),
+ 'db-refresh':()=>refreshJobs(),
+ 'db-page':el=>refreshJobs({page:Number(el.dataset.page)}),
+ 'db-clear-filter':clearJobFilter,
+ 'results-purpose':el=>changeResultPurpose(el.dataset.purpose),
+ 'results-refresh':()=>refreshResultMetrics(),
+ 'results-model-history':el=>showModelHistory(el.dataset.model,el.dataset.provider),
  'export-results':exportCSV,
  'history-detail':el=>detailHistory(el.dataset.id),
  'add-note':addNote,
