@@ -7,6 +7,31 @@ const env={BACKEND_API_URL:'https://backend.example',BACKEND_SHARED_TOKEN:'test-
 const req=(path='/api/data',options={})=>new Request('https://dashboard.example'+path,options);
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});
 
+test('image GET preserves binary bytes with server authentication and private headers',async()=>{
+  const bytes=new Uint8Array([137,80,78,71,13,10,26,10,0,255,128]);let sent;
+  const path='/api/attachments/5f0d0ef8-3bf1-4265-a69b-f199c710e19f/image';
+  const response=await handleProjectApi(req(path),env,config,{fetchImpl:async(url,options)=>{sent={url,options};return new Response(bytes,{headers:{'content-type':'image/png','set-cookie':'secret','x-internal':'private'}});}});
+  assert.equal(response.status,200);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),bytes);
+  assert.equal(String(sent.url),'https://backend.example'+path);
+  assert.equal(sent.options.headers['X-Fincode-Backend-Token'],'test-only-token');
+  assert.equal(response.headers.get('content-type'),'image/png');
+  assert.equal(response.headers.get('cache-control'),'private, no-store');
+  assert.equal(response.headers.get('x-content-type-options'),'nosniff');
+  assert.equal(response.headers.get('set-cookie'),null);assert.equal(response.headers.get('x-internal'),null);
+});
+
+test('image forwarding is scoped, bounded, and preserves JSON errors',async()=>{
+  const path='/api/attachments/5f0d0ef8-3bf1-4265-a69b-f199c710e19f/image';
+  for(const [route,type] of [[path,'text/html'],[path,'image/svg+xml'],['/api/data','image/png'],['/api/attachments/not-a-uuid/image','image/png']]){
+    const response=await handleProjectApi(req(route),env,config,{fetchImpl:async()=>new Response('bad',{headers:{'content-type':type}})});
+    assert.equal(response.status,503);
+  }
+  const tooLarge=await handleProjectApi(req(path),env,config,{fetchImpl:async()=>new Response(new Uint8Array(10*1024*1024+1),{headers:{'content-type':'image/jpeg'}})});
+  assert.equal(tooLarge.status,503);
+  const missing=await handleProjectApi(req(path),env,config,{fetchImpl:async()=>json({error:{code:'ATTACHMENT_ORIGINAL_NOT_FOUND'}},404)});
+  assert.equal(missing.status,404);assert.equal((await missing.json()).error.code,'ATTACHMENT_ORIGINAL_NOT_FOUND');
+});
+
 test('Worker forwards API requests only to configured backend with server token',async()=>{
   let call;
   const result=await handleProjectApi(req('/api/data/normal',{method:'POST',headers:{Origin:'https://dashboard.example','Content-Type':'application/json',Authorization:'browser-token',Cookie:'private-cookie'},body:'{"title":"test"}'}),env,config,{fetchImpl:async(url,options)=>{call={url,options};return json({saved:true});}});

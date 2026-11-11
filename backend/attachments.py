@@ -15,10 +15,11 @@ import shutil
 import tempfile
 import time
 import unicodedata
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import Request
+from starlette.responses import Response
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 from python_multipart.exceptions import MultipartParseError
@@ -157,6 +158,10 @@ class LocalStorage:
     def delete(self, key):
         self._path(key).unlink(missing_ok=True)
 
+    def read(self, key):
+        with self._path(key).open('rb') as source:
+            return source.read(MAX_FILE_BYTES + 1)
+
 
 class S3Storage:
     backend = 's3'
@@ -179,6 +184,22 @@ class S3Storage:
 
     def delete(self, key):
         self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    def read(self, key):
+        if not _OBJECT_KEY.fullmatch(key):
+            raise ValueError('Invalid object key')
+        from botocore.exceptions import ClientError
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            if exc.response.get('Error', {}).get('Code') in ('NoSuchKey', '404', 'NotFound'):
+                raise FileNotFoundError() from None
+            raise
+        body = response['Body']
+        try:
+            return body.read(MAX_FILE_BYTES + 1)
+        finally:
+            body.close()
 
 
 def storage_from_env():
@@ -255,6 +276,39 @@ class AttachmentService:
     def _record_exists(self, identifier):
         with self.db.connect() as conn:
             return conn.execute('SELECT id FROM attachments WHERE id=%s', (identifier,)).fetchone() is not None
+
+    def image(self, identifier):
+        identifier = attachment_ids([identifier])[0]
+        if not self.configured:
+            raise error('첨부 원본 저장소에 연결할 수 없습니다.', 503, 'ATTACHMENT_STORAGE_UNAVAILABLE')
+        try:
+            with self.db.connect() as conn:
+                row = conn.execute('SELECT * FROM attachments WHERE id=%s', (identifier,)).fetchone()
+        except Exception:
+            raise error('첨부파일 정보를 조회하지 못했습니다.', 503, 'ATTACHMENT_DATABASE_UNAVAILABLE') from None
+        if row is None:
+            raise error('첨부파일을 찾을 수 없습니다.', 404, 'ATTACHMENT_NOT_FOUND')
+        if row['media_type'] not in ('image/png', 'image/jpeg'):
+            raise error('이미지 첨부파일만 표시할 수 있습니다.', 415, 'ATTACHMENT_NOT_IMAGE')
+        if row['storage_backend'] != self.storage.backend:
+            raise error('첨부 원본 저장소에 연결할 수 없습니다.', 503, 'ATTACHMENT_STORAGE_UNAVAILABLE')
+        try:
+            data = self.storage.read(row['storage_key'])
+        except FileNotFoundError:
+            raise error('첨부 원본 이미지를 찾을 수 없습니다.', 404, 'ATTACHMENT_ORIGINAL_NOT_FOUND') from None
+        except Exception:
+            raise error('첨부 원본 이미지를 불러오지 못했습니다.', 503, 'ATTACHMENT_STORAGE_UNAVAILABLE') from None
+        if (len(data) > MAX_FILE_BYTES or len(data) != row['size_bytes']
+                or hashlib.sha256(data).hexdigest() != row['file_sha256']):
+            raise error('저장된 첨부 원본의 무결성을 확인하지 못했습니다.', 409, 'ATTACHMENT_INTEGRITY_ERROR')
+        media_type = ('image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else
+                      'image/jpeg' if data.startswith(b'\xff\xd8\xff') else None)
+        if media_type is None:
+            raise error('이미지 첨부파일만 표시할 수 있습니다.', 415, 'ATTACHMENT_NOT_IMAGE')
+        return Response(data, media_type=media_type, headers={
+            'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+            'Content-Disposition': "inline; filename*=UTF-8''" + quote(row['original_name'], safe=''),
+        })
 
     def _process(self, upload, filename, media_type):
         from backend.attachment_extract import AttachmentExtractionError, run_extraction
@@ -413,5 +467,9 @@ def install_routes(app, persistence, *, storage=None, extractor=None):
     @app.get('/api/attachments/{identifier}')
     async def attachment(identifier: str):
         return {'attachment': await asyncio.to_thread(service.get, identifier)}
+
+    @app.get('/api/attachments/{identifier}/image')
+    async def attachment_image(identifier: str):
+        return await asyncio.to_thread(service.image, identifier)
 
     return service

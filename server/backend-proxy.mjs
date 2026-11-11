@@ -5,6 +5,8 @@ const JSON_BODY_LIMIT=200000;
 // The backend independently enforces the 10 MiB file limit. Leave only a small
 // multipart envelope here, and bound actual streamed bytes even without a length.
 const UPLOAD_BODY_LIMIT=10*1024*1024+64*1024;
+const IMAGE_BODY_LIMIT=10*1024*1024;
+const IMAGE_ROUTE=/^\/api\/attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/image$/i;
 
 function validMultipartBoundary(contentType) {
   const parameters=contentType.split(';').slice(1).map(value=>value.trim());
@@ -32,6 +34,7 @@ export async function handleProjectApi(request,env,config,{fetchImpl=fetch}={}) 
     if(backend.protocol!=='https:'||backend.username||backend.password||backend.search||backend.hash||backend.pathname!=='/'||!env.BACKEND_SHARED_TOKEN)throw Error();
   }catch{return fail('BACKEND_CONFIG_INVALID','서버의 BACKEND_API_URL(HTTPS 주소)과 BACKEND_SHARED_TOKEN을 확인해 주세요.');}
   const incoming=new URL(request.url);
+  const imageRequest=request.method==='GET'&&IMAGE_ROUTE.test(incoming.pathname);
   const origin=request.headers.get('origin');
   if(origin!==null && origin!==incoming.origin)return fail('ORIGIN_REJECTED','같은 대시보드에서 요청해 주세요.',403);
   if(!['GET','POST','PUT','DELETE'].includes(request.method))return fail('METHOD_NOT_ALLOWED','지원하지 않는 요청 방식입니다.',405);
@@ -65,9 +68,20 @@ export async function handleProjectApi(request,env,config,{fetchImpl=fetch}={}) 
   try {
     const response=await fetchImpl(new URL(incoming.pathname+incoming.search,backend),{
       method:request.method,body,redirect:'manual',signal:controller.signal,
-      headers:{'Content-Type':forwardedContentType,'Accept':'application/json','X-Fincode-Backend-Token':env.BACKEND_SHARED_TOKEN},
+      headers:{'Content-Type':forwardedContentType,'Accept':imageRequest?'image/png, image/jpeg, application/json':'application/json','X-Fincode-Backend-Token':env.BACKEND_SHARED_TOKEN},
     });
     if(response.status>=300&&response.status<400)return fail('BACKEND_REDIRECT_REJECTED','DB 백엔드 주소의 리디렉션 설정을 확인해 주세요.');
+    const responseType=response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+    if(imageRequest&&response.status===200&&['image/png','image/jpeg'].includes(responseType)) {
+      const reader=response.body?.getReader();
+      if(!reader)return fail('BACKEND_INVALID_RESPONSE','첨부 원본 이미지가 없습니다.');
+      const chunks=[];let size=0;
+      try {
+        for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>IMAGE_BODY_LIMIT){await reader.cancel();return fail('BACKEND_INVALID_RESPONSE','첨부 원본 이미지의 크기를 확인해 주세요.');}chunks.push(value);}
+      }finally{reader.releaseLock();}
+      const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+      return new Response(bytes,{headers:{'content-type':responseType,'cache-control':'private, no-store','x-content-type-options':'nosniff','content-disposition':'inline'}});
+    }
     if(!response.headers.get('content-type')?.includes('application/json'))return fail('BACKEND_INVALID_RESPONSE','DB 백엔드 응답 형식을 확인해 주세요.');
     return new Response(await response.text(),{status:response.status,headers});
   }catch{return fail('BACKEND_UNAVAILABLE','DB 백엔드에 연결하지 못했습니다. 실행 기록을 확인한 뒤 다시 시도해 주세요.');}

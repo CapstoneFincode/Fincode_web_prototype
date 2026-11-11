@@ -63,3 +63,41 @@ test('preview fixtures yield the labelled 3 categories and 9 runs using the same
   const report=buildAttackReport(createExampleReport(config.systemPrompt));
   assert.equal(report.groups.length,3);assert.equal(report.counts.total,9);assert.equal(report.counts.success,3);assert.equal(report.counts.failure,3);assert.equal(report.counts.unknown,1);assert.equal(report.counts.unjudged,1);assert.equal(report.counts.error,1);assert.equal(report.counts.asr,50);
 });
+
+test('image runs show immutable originals in order and collapse actual OCR messages',()=>{
+  const a='5f0d0ef8-3bf1-4265-a69b-f199c710e19f',b='de7a6441-a032-4588-8efc-e3b5d560721d';
+  const r=run('images');
+  r.input_snapshot.attachments=[{id:a,mediaType:'image/png',filename:'첫 이미지.png',url:'https://untrusted.invalid/image'},{id:b,mediaType:'image/jpeg',filename:'둘째.jpg'}];
+  r.input_snapshot.attackScenario.payload='첨부된 회의 안내를 요약해 주세요.';
+  r.calls=[{purpose:'summarize',request_snapshot:{messages:[{role:'user',content:'ACTUAL_OCR_TEXT'}]}}];
+  const html=renderAttackRun(r,0);
+  assert.match(html,/<h4>INPUT <span>첨부 이미지/);
+  assert.ok(html.indexOf(`src="/api/attachments/${a}/image"`)<html.indexOf(`src="/api/attachments/${b}/image"`));
+  const beforeRaw=html.split('<details class="ar-raw"><summary>실행 기록')[0];
+  assert.doesNotMatch(beforeRaw,/https:\/\/untrusted/);
+  assert.match(beforeRaw,/<details class="ar-raw ar-ocr"><summary>OCR 추출 텍스트 · 실제 전송 프롬프트<\/summary>[\s\S]*ACTUAL_OCR_TEXT/);
+  assert.match(beforeRaw,/함께 전송한 본문/);
+  assert.ok(beforeRaw.indexOf('<img')<beforeRaw.indexOf('ACTUAL_OCR_TEXT'));
+  assert.doesNotMatch(renderAttackRun(run('text'),0),/<img|ar-ocr/);
+});
+
+test('image URLs require snapshot image metadata and filenames cannot inject HTML',()=>{
+  const r=run('unsafe');
+  r.attachments=[{id:'5f0d0ef8-3bf1-4265-a69b-f199c710e19f',mediaType:'image/png'}];
+  assert.doesNotMatch(renderAttackRun(r,0),/<img/);
+  r.input_snapshot.attachments=[{id:'x" onerror="alert(1)',mediaType:'image/png',filename:'bad'},
+    {id:'5f0d0ef8-3bf1-4265-a69b-f199c710e19f',mediaType:'text/html',filename:'bad.html'}];
+  assert.doesNotMatch(renderAttackRun(r,0),/<img/);
+  r.input_snapshot.attachments=[{id:'5f0d0ef8-3bf1-4265-a69b-f199c710e19f',mediaType:'image/png',filename:'"><script>alert(1)</script>.png'}];
+  const html=renderAttackRun(r,0);
+  assert.doesNotMatch(html,/<script| onerror=/);
+  assert.match(html,/&lt;script&gt;/);
+});
+
+test('missing original reveals a readable fallback without discarding OCR',()=>{
+  const note={hidden:true};let onerror;
+  const img={hidden:false,complete:false,addEventListener:(type,fn)=>{assert.equal(type,'error');onerror=fn;},closest:()=>({querySelector:()=>note})};
+  const root={innerHTML:'',querySelectorAll:()=>[img]};
+  mountAttackReport(root,{runs:[run('1')]});onerror();
+  assert.equal(img.hidden,true);assert.equal(note.hidden,false);
+});

@@ -69,10 +69,21 @@ export function filterAttackRuns(runs,view={},categories=[]){
   });
 }
 function badge(status){return `<span class="ar-badge ${status}">${resultLabels[status]}</span>`;}
-function promptHtml(run){
+function messageHtml(run){
   const request=requestMessages(run);
   if(!request.messages.length)return '<p class="ar-empty-small">프롬프트 기록이 없어요.</p>';
   return `<p class="ar-source">${request.source==='sent'?'호출 기록에 저장된 실제 전송 메시지':'호출 기록 없음 · 실행 예정 입력 스냅샷'}</p>`+request.messages.map(m=>m.role==='system'?`<details class="ar-system"><summary>SYSTEM · 시스템 지침</summary><pre>${esc(content(m))}</pre></details>`:`<div class="ar-message"><span>${esc(m.role?.toUpperCase()||'MESSAGE')}</span><pre>${esc(content(m))}</pre></div>`).join('');
+}
+export function attackImages(run){
+  const attachments=run.input_snapshot?.attachments;
+  if(!Array.isArray(attachments))return [];
+  return attachments.filter(a=>a&&['image/png','image/jpeg'].includes(a.mediaType)&&typeof a.id==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a.id));
+}
+function promptHtml(run){
+  const images=attackImages(run);
+  if(!images.length)return messageHtml(run);
+  const body=run.input_snapshot?.attackScenario?.payload??run.input_snapshot?.email?.body;
+  return `<p class="ar-source">실행에 사용한 원본 이미지 · ${images.length}장</p><div class="ar-images">${images.map((a,i)=>`<figure class="ar-image"><a href="/api/attachments/${a.id}/image" target="_blank" rel="noopener noreferrer" aria-label="${esc(a.filename)} 원본 이미지 열기"><img data-attack-image src="/api/attachments/${a.id}/image" alt="첨부 이미지 ${i+1}: ${esc(a.filename)}" loading="lazy" decoding="async"></a><p class="ar-image-error" hidden>원본 이미지를 불러오지 못했어요. 아래에서 저장된 OCR 텍스트를 확인해 주세요.</p><figcaption><span>${i+1}. ${esc(a.filename)}</span><a href="/api/attachments/${a.id}/image" target="_blank" rel="noopener noreferrer">원본 보기 ↗</a></figcaption></figure>`).join('')}</div>${typeof body==='string'&&body.trim()?`<div class="ar-message"><span>함께 전송한 본문</span><pre>${esc(body)}</pre></div>`:''}<details class="ar-raw ar-ocr"><summary>OCR 추출 텍스트 · 실제 전송 프롬프트</summary>${messageHtml(run)}</details>`;
 }
 function canaryContextHtml(verdict){
   const occurrences=verdict?.details?.occurrences;if(!Array.isArray(occurrences)||!occurrences.length)return '';
@@ -85,7 +96,7 @@ export function renderAttackRun(run,index,options={}){
   const reason=status==='error'?(run.error_message||'실행 오류로 공격 성공 여부를 판정하지 않았어요.'):status==='pending'?'아직 실행이 완료되지 않았어요.':status==='cancelled'?'실행이 취소됐어요.':v?.evidence||'자동 판정이 없어요. 응답을 검토한 뒤 판정을 저장해 주세요.';
   const signal={refusal_hint:'거부 표현 감지 · 보조 정보',unverified_instruction_claim:'원문과 일치하지 않는 지침 주장 · 보조 정보',no_match:'원문 일치 없음'}[v?.details?.responseSignal];
   const response=run.final_output??(['queued','running'].includes(run.status)?'응답 대기 중':'저장된 응답 없음');
-  return `<details class="ar-run" data-run-card="${esc(run.id)}" ${options.openAll?'open':''}><summary><span class="ar-chevron" aria-hidden="true">⌄</span><span class="ar-run-number">#${esc(run.case_number??index+1)}</span><span class="ar-run-title"><strong>${esc(s.name)}</strong><small>${esc(s.categoryName)} · ${vectorName(s.vector)} · 반복 ${esc(run.repeat_index??1)}</small></span>${badge(status)}</summary><div class="ar-run-body"><div class="ar-reason ${status}"><span>판정 근거</span><p>${esc(reason)}</p>${v?`<small>${v.judge_type==='human'?'수동 판정 우선':'자동 규칙 판정'} · ${esc(v.evaluator_version)}${signal?' · '+esc(signal):''}</small>`:''}</div>${canaryContextHtml(v)}<div class="ar-conversation"><section class="ar-prompt"><h4>PROMPT <span>입력 프롬프트</span></h4>${promptHtml(run)}</section><section class="ar-response"><h4>RESPONSE <span>모델 응답</span></h4><pre>${esc(response)}</pre>${v?.details?.match?`<details class="ar-match"><summary>판정에 일치한 문자열</summary><pre>${esc(v.details.match.text)}</pre></details>`:''}</section></div><div class="ar-run-meta">${run.input_snapshot?.inputMode==='scenario-only-v1'?'<span>시나리오 단독 입력 · 기준 이메일 없음</span>':''}${run.input_snapshot?.inputMode==='attachment-v1'?`<span>첨부파일 간접 입력 · ${(run.input_snapshot.attachments||[]).map(a=>esc(a.filename)).join(', ')}</span>`:''}${!s.frozen?'<span>이전 실행 · 분류명은 현재 등록 정보로 표시</span>':''}<span>모델 <strong>${esc(run.requested_model||'기록 없음')}</strong></span><span>응답시간 <strong>${Number.isFinite(run.backend_latency_ms)?(run.backend_latency_ms/1000).toFixed(2)+'초':'—'}</strong></span><span>입력 / 출력 토큰 <strong>${number(call.input_tokens)} / ${number(call.output_tokens)}</strong></span><span>전체 토큰 <strong>${number(run.service_total_tokens)}</strong></span></div><details class="ar-raw"><summary>실행 기록 · 판정 이력 ${run.evaluations?.length||0}건</summary><pre>${esc(JSON.stringify({runId:run.id,scenario:s,inputSnapshot:run.input_snapshot,calls:run.calls,evaluations:run.evaluations},null,2))}</pre></details>${options.renderReview?options.renderReview(run):''}</div></details>`;
+  return `<details class="ar-run" data-run-card="${esc(run.id)}" ${options.openAll?'open':''}><summary><span class="ar-chevron" aria-hidden="true">⌄</span><span class="ar-run-number">#${esc(run.case_number??index+1)}</span><span class="ar-run-title"><strong>${esc(s.name)}</strong><small>${esc(s.categoryName)} · ${vectorName(s.vector)} · 반복 ${esc(run.repeat_index??1)}</small></span>${badge(status)}</summary><div class="ar-run-body"><div class="ar-reason ${status}"><span>판정 근거</span><p>${esc(reason)}</p>${v?`<small>${v.judge_type==='human'?'수동 판정 우선':'자동 규칙 판정'} · ${esc(v.evaluator_version)}${signal?' · '+esc(signal):''}</small>`:''}</div>${canaryContextHtml(v)}<div class="ar-conversation"><section class="ar-prompt"><h4>${attackImages(run).length?'INPUT <span>첨부 이미지</span>':'PROMPT <span>입력 프롬프트</span>'}</h4>${promptHtml(run)}</section><section class="ar-response"><h4>RESPONSE <span>모델 응답</span></h4><pre>${esc(response)}</pre>${v?.details?.match?`<details class="ar-match"><summary>판정에 일치한 문자열</summary><pre>${esc(v.details.match.text)}</pre></details>`:''}</section></div><div class="ar-run-meta">${run.input_snapshot?.inputMode==='scenario-only-v1'?'<span>시나리오 단독 입력 · 기준 이메일 없음</span>':''}${run.input_snapshot?.inputMode==='attachment-v1'?`<span>첨부파일 간접 입력 · ${(run.input_snapshot.attachments||[]).map(a=>esc(a.filename)).join(', ')}</span>`:''}${!s.frozen?'<span>이전 실행 · 분류명은 현재 등록 정보로 표시</span>':''}<span>모델 <strong>${esc(run.requested_model||'기록 없음')}</strong></span><span>응답시간 <strong>${Number.isFinite(run.backend_latency_ms)?(run.backend_latency_ms/1000).toFixed(2)+'초':'—'}</strong></span><span>입력 / 출력 토큰 <strong>${number(call.input_tokens)} / ${number(call.output_tokens)}</strong></span><span>전체 토큰 <strong>${number(run.service_total_tokens)}</strong></span></div><details class="ar-raw"><summary>실행 기록 · 판정 이력 ${run.evaluations?.length||0}건</summary><pre>${esc(JSON.stringify({runId:run.id,scenario:s,inputSnapshot:run.input_snapshot,calls:run.calls,evaluations:run.evaluations},null,2))}</pre></details>${options.renderReview?options.renderReview(run):''}</div></details>`;
 }
 export function renderAttackReport(detail,view={},options={}){
   const report=buildAttackReport(detail,options.categories),c=report.counts;
@@ -98,7 +109,15 @@ export function renderAttackReport(detail,view={},options={}){
 }
 export function mountAttackReport(root,detail,options={}){
   const view={category:'all',status:'all',query:'',openAll:false,...options.initialView};
-  const draw=()=>{root.innerHTML=renderAttackReport(detail,view,options);options.onRender?.(root);};
+  const draw=()=>{
+    root.innerHTML=renderAttackReport(detail,view,options);
+    root.querySelectorAll?.('[data-attack-image]').forEach(img=>{
+      const failed=()=>{img.hidden=true;const note=img.closest('figure')?.querySelector('.ar-image-error');if(note)note.hidden=false;};
+      img.addEventListener('error',failed,{once:true});
+      if(img.complete&&!img.naturalWidth)failed();
+    });
+    options.onRender?.(root);
+  };
   root.onclick=event=>{
     const target=event.target.closest('button');if(!target||!root.contains(target))return;
     if(target.hasAttribute('data-report-category')){view.category=target.dataset.reportCategory;draw();root.querySelector('.ar-logs')?.scrollIntoView({block:'start',behavior:'smooth'});}
