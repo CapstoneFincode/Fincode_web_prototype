@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from contextlib import asynccontextmanager
 import secrets
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from backend.persistence import Persistence
 from backend.deployment import is_hosted, validate_hosted
@@ -326,16 +326,15 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
         if not configured_key():
             raise APIError(503, 'API_KEY_MISSING', '서버에 BAZE_API_KEY를 설정해 주세요.')
         messages = [{'role':'system','content':CONFIG['systemPrompt']}, {'role':'user','content':f'제목: {subject}\n\n{body}'}]
-        if not persistence.db:
-            if payload.get('attachments'):
-                raise APIError(503, 'DATABASE_NOT_CONFIGURED', '첨부파일 요약에는 DB 연결이 필요합니다.')
-            return await generate(model, messages)
-        # Only accepted baseline fields enter the immutable snapshot.
-        data = {'kind':'summary','model':model,'email':{'subject':subject,'body':body},
-                'idempotencyKey':payload.get('idempotencyKey',str(uuid4()))}
         if payload.get('attachments'):
-            data['attachments'] = payload['attachments']
-        return await persistence.summarize(data, messages, generate)
+            if not persistence.db:
+                raise APIError(503, 'DATABASE_NOT_CONFIGURED', '첨부파일 요약에는 DB 연결이 필요합니다.')
+            messages = await persistence.call('summary_messages', subject, body, payload['attachments'], CONFIG)
+        # Ad-hoc summaries are transient. They never enter the durable experiment
+        # queue or its input/output/call logs, even when a DB is configured.
+        # No replay cache or automatic retry: each explicit request calls once.
+        result = await generate(model, messages)
+        return {**result, 'database': {'saved': False, 'mode': 'transient'}}
 
     persistence.install(app, read_payload, configured_key)
     app.state.worker_once = lambda: persistence.worker_once(generate, configured_key)

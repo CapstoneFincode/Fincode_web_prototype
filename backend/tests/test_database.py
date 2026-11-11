@@ -243,17 +243,44 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.app.state.worker_once())
         self.assertEqual(len(self.calls),2)
 
-    async def test_summary_is_saved_and_idempotent_replay_does_not_call_model(self):
+    def execution_counts(self):
+        with self.db.connect() as conn:
+            return {table:conn.execute(f'SELECT count(*) AS n FROM {table}').fetchone()['n']
+                    for table in ('experiments','experiment_cases','runs','llm_calls','evaluations')}
+
+    async def test_summary_is_transient_and_explicit_requests_do_not_replay_stored_results(self):
+        # Retain an old saved summary as a migration fixture; new HTTP summary
+        # requests must neither overwrite it nor create further execution rows.
+        with self.db.connect() as conn:
+            legacy=self.db._bundle(conn,{'model':'test-model','kind':'summary','idempotencyKey':str(uuid4())},
+                CONFIG,[({'subject':'old','body':'previous saved email'},None,'unknown')],True)
+        self.db.finish(legacy['runId'],{'summary':'previous saved result'},'succeeded',1)
+        old=await self.detail(legacy['id'])
+        counts=self.execution_counts()
         payload={'model':'test-model','email':{'body':'ad hoc'},'idempotencyKey':str(uuid4()),'repeat':99}
         a=await self.client.post('/api/summarize',json=payload)
         self.assertEqual(a.status_code,200,a.text)
         b=await self.client.post('/api/summarize',json=payload)
-        self.assertEqual(a.json()['runId'],b.json()['runId'])
-        self.assertEqual(len(self.calls),1)
-        detail=await self.detail(a.json()['experimentId'])
-        self.assertEqual(len(detail['runs']),1)
-        self.assertEqual(detail['runs'][0]['expected_label'],'unknown')
-        self.assertIsNone(detail['runs'][0]['evaluations'])
+        self.assertEqual(b.status_code,200,b.text)
+        for response in [a,b]:
+            self.assertEqual(response.json()['database'],{'saved':False,'mode':'transient'})
+            self.assertEqual(response.json()['summary'],'DB_TEST_ONLY')
+            self.assertNotIn('experimentId',response.json())
+            self.assertNotIn('runId',response.json())
+        self.assertEqual(len(self.calls),2)
+        self.assertEqual(self.execution_counts(),counts)
+        self.assertEqual(await self.detail(legacy['id']),old)
+
+    async def test_summary_errors_do_not_create_execution_or_call_records(self):
+        counts=self.execution_counts()
+        for status,answer in [(503,'not returned'),(200,'')]:
+            self.upstream_status,self.answer=status,answer
+            response=await self.client.post('/api/summarize',json={'model':'test-model','email':{'body':'ad hoc'}})
+            self.assertEqual(response.status_code,502,response.text)
+            self.assertNotIn('experimentId',response.json())
+            self.assertNotIn('runId',response.json())
+            self.assertEqual(self.execution_counts(),counts)
+        self.assertEqual(len(self.calls),2)
 
     async def test_missing_usage_error_usage_and_human_verdict_history(self):
         self.usage=None
@@ -458,22 +485,23 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['experiment']['status'],'completed')
             self.assertEqual(result['runs'][0]['final_output'],'정상 요약')
 
-    async def test_db_failure_before_call_prevents_spending_and_after_call_retains_observed_usage(self):
+    async def test_worker_db_failure_prevents_spending_or_retains_observed_usage_without_retry(self):
         import psycopg
-        payload={'model':'test-model','email':{'body':'test'},'idempotencyKey':str(uuid4())}
-        with patch.object(self.app.state.database,'prepare_summary',side_effect=psycopg.OperationalError('private DSN')):
-            response=await self.client.post('/api/summarize',json=payload)
-            self.assertEqual(response.status_code,503)
-            self.assertNotIn('private DSN',response.text)
+        from backend.database import DataError
+        eid=await self.start()
+        with patch.object(self.app.state.database,'claim_next',side_effect=psycopg.OperationalError('private DSN')):
+            with self.assertRaises(DataError) as failure:
+                await self.app.state.worker_once()
+            self.assertNotIn('private DSN',failure.exception.message)
             self.assertEqual(self.calls,[])
         with patch.object(self.app.state.database,'finish',side_effect=psycopg.OperationalError('private DSN')):
-            response=await self.client.post('/api/summarize',json=payload)
-            self.assertEqual(response.status_code,503,response.text)
-            self.assertFalse(response.json()['database']['saved'])
-            self.assertEqual(response.json()['summary'],'DB_TEST_ONLY')
-            self.assertEqual(response.json()['usage']['totalTokens'],12)
+            with self.assertRaises(DataError) as failure:
+                await self.app.state.worker_once()
+            observed=failure.exception.observed_result
+            self.assertEqual(observed['summary'],'DB_TEST_ONLY')
+            self.assertEqual(observed['usage']['totalTokens'],12)
             self.assertEqual(len(self.calls),1)
-            self.assertNotIn('private DSN',response.text)
-        replay=await self.client.post('/api/summarize',json=payload)
-        self.assertEqual(replay.status_code,409)
+            self.assertNotIn('private DSN',failure.exception.message)
+        self.assertFalse(await self.app.state.worker_once())
         self.assertEqual(len(self.calls),1)
+        self.assertEqual((await self.detail(eid))['runs'][0]['status'],'running')

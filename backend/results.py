@@ -2,12 +2,13 @@
 
 These queries never inspect prompt/response bodies or alter runs/evaluations.
 Execution types stay separate and only defense-OFF runs contribute to metrics.
+Legacy email summaries remain stored, but are outside experiment reporting.
 """
 from datetime import datetime, timezone
 from backend.database import DataError, text
 
 
-PURPOSES = ('attack', 'summary', 'normal', 'performance')
+PURPOSES = ('attack', 'normal', 'performance')
 VECTORS = ('all', 'direct', 'indirect')
 
 
@@ -29,7 +30,8 @@ def experiment_page(db, page=1, page_size=5, purpose=None, vector='all', model=N
         provider = text(provider, '제공자', 100)
     if type(page) is not int or page < 1 or type(page_size) is not int or not 1 <= page_size <= 100:
         raise DataError('페이지는 1 이상, 표시 개수는 1~100으로 지정해 주세요.')
-    where = '''(%s::text IS NULL OR e.purpose=%s)
+    where = '''e.purpose IN ('attack','normal','performance')
+        AND (%s::text IS NULL OR e.purpose=%s)
         AND ((%s::text IS NULL AND %s::text IS NULL AND %s='all') OR EXISTS (
             SELECT 1 FROM experiment_cases c LEFT JOIN attack_scenarios s ON s.id=c.attack_scenario_id
             WHERE c.experiment_id=e.id AND (%s::text IS NULL OR c.requested_model=%s)
@@ -53,7 +55,8 @@ def experiment_page(db, page=1, page_size=5, purpose=None, vector='all', model=N
             LEFT JOIN runs r ON r.experiment_case_id=c.id
             GROUP BY e.id,e.name,e.purpose,e.status,e.created_at
             ORDER BY e.created_at DESC,e.id DESC''', (*params, page_size, (page-1)*page_size)).fetchall()
-        active = conn.execute("SELECT count(*)::int AS count FROM experiments WHERE status IN ('queued','running')").fetchone()['count']
+        active = conn.execute("""SELECT count(*)::int AS count FROM experiments
+            WHERE purpose IN ('attack','normal','performance') AND status IN ('queued','running')""").fetchone()['count']
     return {'experiments':rows, 'page':page, 'pageSize':page_size, 'total':total,
             'totalPages':pages, 'activeCount':active}
 

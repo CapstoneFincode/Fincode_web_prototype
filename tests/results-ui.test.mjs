@@ -101,7 +101,7 @@ test('changing the visible model filters actual aggregate rows without using his
   const a=app();a.state.resultReport.data=metrics('attack','all',[model('one'),model('two')]);
   a.state.resultReport.model='two';assert.deepEqual(clone(a.liveResultRows()).map(x=>x.model),['two']);
   assert.match(a.resultModelOptions(),/value="two" selected/);assert.doesNotMatch(a.resultModelOptions(),/gemini-3.5-flash-lite/);
-  a.changeResultPurpose('summary');assert.equal(a.state.resultReport.model,'all');assert.equal(a.state.resultReport.data,null);assert.equal(a.state.resultReport.vector,'all');
+  a.changeResultPurpose('normal');assert.equal(a.state.resultReport.model,'all');assert.equal(a.state.resultReport.data,null);assert.equal(a.state.resultReport.vector,'all');
 });
 
 test('zero ASR remains a measured zero while unavailable measurements remain dashes',()=>{
@@ -177,10 +177,37 @@ test('bound model and vector controls filter live results without submitting exp
   assert.ok(a.requests.every(r=>r.options.method==='GET'));
 });
 
-test('ordinary summary and normal response metrics do not claim attack or quality scores',()=>{
-  const a=app();for(const purpose of ['summary','normal']){
-    Object.assign(a.state.resultReport,{purpose,data:metrics(purpose,'all',[model('service',{attack:null,quality:null})])});
-    const html=a.liveResultsContent();assert.match(html,/모델별 평균 응답시간/);assert.match(html,/공격 성공률 집계 대상 아님/);
-    assert.doesNotMatch(html,/모델별 공격 성공률|ROUGE-L F1/);
+test('normal response metrics do not claim attack or quality scores',()=>{
+  const a=app();
+  Object.assign(a.state.resultReport,{purpose:'normal',data:metrics('normal','all',[model('service',{attack:null,quality:null})])});
+  const html=a.liveResultsContent();assert.match(html,/모델별 평균 응답시간/);assert.match(html,/공격 성공률 집계 대상 아님/);
+  assert.doesNotMatch(html,/모델별 공격 성공률|ROUGE-L F1/);
+});
+
+test('results expose only three evaluation types and cannot select the retired summary type',()=>{
+  const a=app();a.state.resultReport.data=metrics();
+  const html=a.pages.results();
+  assert.deepEqual([...html.matchAll(/data-action="results-purpose" data-purpose="([^"]+)"/g)].map(match=>match[1]),['attack','normal','performance']);
+  assert.doesNotMatch(html,/이메일 요약|data-purpose="summary"/);
+  const before=clone(a.state.resultReport);a.changeResultPurpose('summary');
+  assert.deepEqual(clone(a.state.resultReport),before);assert.equal(a.requests.length,0);
+});
+
+test('legacy summary rows in a paginated response fail explicitly without exposing their contents',async()=>{
+  const a=app(()=>response(history(1,{experiments:[job('legacy-summary',{name:'LEGACY_SUMMARY_CONTENT',purpose:'summary'})]})));
+  await a.refreshJobs();
+  assert.ok(a.state.jobError);assert.equal(a.state.jobs.length,0);
+  assert.match(a.databaseJobRows(),/role="alert"/);assert.doesNotMatch(a.databaseJobRows(),/LEGACY_SUMMARY_CONTENT/);
+  assert.equal(a.timers.size,0);
+});
+
+test('attack path is available only for attack results and model selection remains available for all three types',()=>{
+  const a=app();
+  for(const purpose of ['attack','normal','performance']){
+    a.state.resultReport.purpose=purpose;a.state.resultReport.data=metrics(purpose);
+    const html=a.pages.results(),path=html.match(/<select\b[^>]*id="live-result-vector"[^>]*>/)?.[0],model=html.match(/<select\b[^>]*id="live-result-model"[^>]*>/)?.[0];
+    assert.ok(path);assert.ok(model);assert.equal(/\bdisabled\b/.test(path),purpose!=='attack');
+    assert.doesNotMatch(model,/\bdisabled\b/);
+    assert.match(html,/<label\b[^>]*for="live-result-vector"/);assert.match(html,/<label\b[^>]*for="live-result-model"/);
   }
 });

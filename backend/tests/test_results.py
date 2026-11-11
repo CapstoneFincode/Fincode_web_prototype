@@ -122,6 +122,43 @@ class ResultsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['scenarioVersionCount'],1)
         self.assertIsNone(row['quality'])
 
+    async def test_legacy_summaries_are_preserved_but_excluded_from_lists_and_counts(self):
+        # Model-free fixture rows include legacy queued/running summaries: those
+        # must neither consume page slots nor keep the results poller active.
+        expected = set()
+        summaries = set()
+        with self.db.connect() as conn:
+            for index,purpose in enumerate(['attack','summary','normal','summary','performance',
+                                            'attack','summary','normal','performance']):
+                identifier = str(uuid4())
+                (summaries if purpose=='summary' else expected).add(identifier)
+                insert(conn,'experiments',{'id':identifier,'name':f'Preserved {index}',
+                    'purpose':purpose,'status':'running' if purpose=='summary' else 'completed',
+                    'evaluation_policy':{},'execution_plan':{},'environment_snapshot':{},
+                    'created_by':'results-test'})
+            before = conn.execute('SELECT * FROM experiments ORDER BY id').fetchall()
+        pages = [(await self.client.get(f'/api/experiments?page={page}&pageSize=5')).json()
+                 for page in [1,2]]
+        self.assertEqual([len(page['experiments']) for page in pages],[5,1])
+        self.assertTrue(all((page['total'],page['totalPages'],page['activeCount'])==(6,2,0)
+                            for page in pages))
+        self.assertEqual({row['id'] for page in pages for row in page['experiments']},expected)
+        explicit_all = (await self.client.get('/api/experiments?page=1&pageSize=100&purpose=all')).json()
+        self.assertEqual({row['id'] for row in explicit_all['experiments']},expected)
+        legacy = (await self.client.get('/api/experiments')).json()['experiments']
+        self.assertEqual({row['id'] for row in legacy},expected)
+        for purpose in ['attack','normal','performance']:
+            filtered = (await self.client.get('/api/experiments?purpose='+purpose)).json()
+            self.assertEqual(filtered['total'],2)
+            self.assertTrue(all(row['purpose']==purpose for row in filtered['experiments']))
+        for identifier in summaries:
+            detail = await self.client.get('/api/experiments/'+identifier)
+            self.assertEqual(detail.status_code,200)
+            self.assertEqual(detail.json()['experiment']['purpose'],'summary')
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute('SELECT * FROM experiments ORDER BY id').fetchall(),before)
+        self.assertEqual(self.calls,[])
+
     async def test_frozen_vectors_archived_versions_and_unmeasured_pending_models(self):
         direct = await self.start()
         indirect = (await self.client.post('/api/data/attacks',json={**ATTACK,'vector':'indirect','channel':'email','name':'Indirect'})).json()['attacks'][-1]
@@ -171,7 +208,8 @@ class ResultsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attack),2)
         self.assertEqual({row['provider'] for row in attack},{'baze','other-provider'})
         self.assertTrue(all(row['total']==1 and row['blocked']==0 for row in attack))
-        for purpose in ['normal','summary','performance']:
+        summary_before = self.db.detail(ids[2])
+        for purpose in ['normal','performance']:
             row = (await self.models('?purpose='+purpose))['models'][0]
             self.assertEqual(row['total'],1)
             self.assertIsNone(row['attack'])
@@ -180,12 +218,14 @@ class ResultsTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row['evaluatorVersions'],['quality-test-v1'])
             else:
                 self.assertIsNone(row['quality'])
+        self.assertEqual((await self.client.get('/api/results/models?purpose=summary')).status_code,400)
+        self.assertEqual(self.db.detail(ids[2]),summary_before)
 
     async def test_invalid_query_values_are_rejected_without_model_calls(self):
         for url in ['/api/experiments?page=0','/api/experiments?pageSize=101','/api/experiments?pageSize=0',
-                    '/api/experiments?purpose=invalid','/api/experiments?model=',
+                    '/api/experiments?purpose=invalid','/api/experiments?purpose=summary','/api/experiments?model=',
                     '/api/experiments?provider=','/api/experiments?purpose=summary&vector=direct',
-                    '/api/results/models?purpose=all','/api/results/models?purpose=invalid',
+                    '/api/results/models?purpose=all','/api/results/models?purpose=invalid','/api/results/models?purpose=summary',
                     '/api/results/models?vector=other','/api/results/models?purpose=normal&vector=indirect']:
             response = await self.client.get(url)
             self.assertEqual(response.status_code,400,(url,response.text))

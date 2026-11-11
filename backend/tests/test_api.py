@@ -29,14 +29,14 @@ def completion(**changes):
 
 
 class APITest(unittest.IsolatedAsyncioTestCase):
-    async def request(self, method="POST", path="/api/summarize", *, handler=None, key="test-key-not-real", **kwargs):
+    async def request(self, method="POST", path="/api/summarize", *, handler=None, key="test-key-not-real", database_url="", **kwargs):
         self.upstream_calls = []
 
         def record(request):
             self.upstream_calls.append(request)
             return handler(request) if handler else httpx.Response(200, json=completion())
 
-        app = create_app(database_url="",api_key=key, upstream_transport=httpx.MockTransport(record))
+        app = create_app(database_url=database_url,api_key=key, upstream_transport=httpx.MockTransport(record))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             return await client.request(method, path, **kwargs)
 
@@ -106,7 +106,24 @@ class APITest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(response["latencyMs"], 0)
         self.assertTrue(response["createdAt"].endswith("Z"))
         self.assertEqual(response["warnings"], [])
+        self.assertEqual(response['database'], {'saved': False, 'mode': 'transient'})
+        self.assertNotIn('experimentId', response)
+        self.assertNotIn('runId', response)
         self.assertNotIn("test-key", result.text)
+
+    async def test_text_summary_never_opens_configured_database_on_success_or_failure(self):
+        # A configured but unavailable DB must not cause either a read or a write
+        # when the summarizer has no stored attachment IDs to resolve.
+        with patch('backend.database.Database.connect', side_effect=AssertionError('summary must not touch DB')) as connect:
+            for status in [200, 503]:
+                with self.subTest(upstream_status=status):
+                    result = await self.request(json=PAYLOAD, database_url='postgresql://unused.invalid/test',
+                        handler=lambda _, status=status: httpx.Response(status, json=completion()))
+                    self.assertEqual(result.status_code, 200 if status == 200 else 502)
+                    self.assertEqual(len(self.upstream_calls), 1)
+                    self.assertNotIn('experimentId', result.json())
+                    self.assertNotIn('runId', result.json())
+            connect.assert_not_called()
 
     async def test_usage_missing_or_invalid_is_null_never_derived(self):
         for usage in [None, {}, {"prompt_tokens": True, "completion_tokens": -1, "total_tokens": "4"}, {"prompt_tokens": 9_007_199_254_740_992}]:

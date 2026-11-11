@@ -12,13 +12,13 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace('export function validateImport','function validateImport')
   .replace(/route\(\);\s*refreshConnection\(\);\s*$/, '');
 function app(saved=null,fetcher=()=>{throw new Error('Unexpected API request');}){
-  const listeners={};
+  const listeners={},storageWrites=[];
   const context=vm.createContext({categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,fetch:fetcher,
-    localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem(){}},
+    localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem:(key,value)=>storageWrites.push({key,value})},
     document:{addEventListener:(name,handler)=>listeners[name]=handler,querySelector:()=>null,querySelectorAll:()=>[]},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#overview'},listeners});
   vm.runInContext(source+'\nrenderRuntime=()=>{};shell=()=>{};toast=()=>{};globalThis.api={state,pages,gtCount,validateImport,filteredResults,historyTable,chart,esc,refreshConnection,runSummary,cancelSummary,summaryRequest,canSummarize,showSummary,formatTokens};',context);
-  return context.api;
+  return {...context.api,storageWrites};
 }
 function backup(){return {schemaVersion:1,normal:structuredClone(seeds.normalSeeds),attacks:structuredClone(seeds.attackSeeds),plans:[],notes:[]};}
 
@@ -78,6 +78,41 @@ test('failed requests preserve reported consumption without presenting a success
   await a.runSummary();assert.equal(calls,1);assert.equal(a.state.summary,null);assert.equal(a.state.running,false);assert.equal(a.state.emailError.code,'EMPTY_RESPONSE');
   assert.match(a.pages.email(),/실패한 요청의 측정값/);assert.match(a.pages.email(),/전체 토큰<strong>25<\/strong>/);assert.match(a.pages.email(),/2\.10초/);
   assert.equal(a.state.lastLiveResult.mode,'error');assert.equal(a.state.lastLiveResult.usage.totalTokens,25);
+});
+test('DB-connected email summary posts once and keeps body, output and measurements only in memory',async()=>{
+  const calls=[];const a=app(null,async(url,options)=>{calls.push({url,options});return response({...liveResult(),database:{saved:false,mode:'transient'}});});enable(a);
+  Object.assign(a.state,{dbConfigured:true,dbReady:true,dbChecked:true,route:'email'});
+  await a.runSummary();
+  assert.equal(calls.length,1);assert.equal(calls[0].url,'/api/summarize');assert.equal(calls[0].options.method,'POST');
+  const input=JSON.parse(calls[0].options.body);
+  assert.deepEqual(input,{model:'gateway-model',email:{subject:'회의 안내',body:'내일 오후 3시 연구실에서 만나요.'},defense:'off',attachments:[]});
+  assert.equal(a.state.summary.summary,'실제 요약');assert.equal(a.state.summary.usage.totalTokens,30);
+  assert.equal(a.state.lastLiveResult.input.email.body,input.email.body);assert.equal(a.storageWrites.length,0);
+  const html=a.pages.email();assert.match(html,/DB에 저장하지 않/);assert.match(html,/새로고침/);
+  assert.doesNotMatch(html,/DB에 저장됨|data-action="db-detail"/);
+  assert.match(html,/data-action="copy-summary"/);assert.match(html,/data-action="download-summary"/);
+  const reloaded=app();assert.equal(reloaded.state.summary,null);assert.equal(reloaded.state.lastLiveResult,null);
+});
+test('transient attachment summaries send only ready file IDs and never create a follow-up experiment request',async()=>{
+  const calls=[];const a=app(null,async(url,options)=>{calls.push({url,options});return response({...liveResult(),database:{saved:false,mode:'transient'}});});enable(a);
+  const attachmentId='c42274af-3449-4d09-885c-84329d5c76b4';
+  Object.assign(a.state,{dbConfigured:true,dbReady:true,attachmentsSupported:true,files:[{id:attachmentId,filename:'회의.hwp',status:'ready',text:'ATTACHMENT_EXTRACTED_TEXT',textChars:25,sizeBytes:123,warnings:[]}]});
+  await a.runSummary();
+  assert.equal(calls.length,1);assert.equal(calls[0].url,'/api/summarize');
+  assert.deepEqual(JSON.parse(calls[0].options.body).attachments,[attachmentId]);
+  assert.doesNotMatch(calls[0].options.body,/ATTACHMENT_EXTRACTED_TEXT|idempotencyKey/);
+  assert.equal(a.state.summary.summary,'실제 요약');assert.equal(a.storageWrites.length,0);
+});
+test('DB-connected summary failures remain visible without retries or local persistence',async()=>{
+  const calls=[];const a=app(null,async(url,options)=>{calls.push({url,options});return response({error:{code:'GATEWAY_RATE_LIMIT',message:'잠시 후 다시 실행해 주세요.'}},429);});enable(a);
+  Object.assign(a.state,{dbConfigured:true,dbReady:true});await a.runSummary();
+  assert.equal(calls.length,1);assert.equal(calls[0].url,'/api/summarize');assert.equal(a.storageWrites.length,0);
+  assert.equal(a.state.summary,null);assert.equal(a.state.emailError.code,'GATEWAY_RATE_LIMIT');
+  assert.equal(a.state.lastLiveResult.mode,'error');assert.doesNotMatch(a.pages.email(),/data-action="db-detail"|DB에 저장됨/);
+});
+test('stale summary persistence metadata cannot reintroduce the retired experiment-history link',()=>{
+  const a=app();enable(a);a.state.summary={...liveResult(),database:{saved:true},experimentId:'old-experiment-id'};
+  const html=a.pages.email();assert.match(html,/실제 요약/);assert.doesNotMatch(html,/DB에 저장됨|data-action="db-detail"|old-experiment-id/);
 });
 test('cancellation ignores a late response and allows a subsequent request to finish independently',async()=>{
   const pendingFetches=[];const a=app(null,()=>new Promise(resolve=>pendingFetches.push(resolve)));enable(a);

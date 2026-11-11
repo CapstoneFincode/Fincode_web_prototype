@@ -34,10 +34,11 @@ class AttachmentWorkflowTest(unittest.IsolatedAsyncioTestCase):
         })
         self.environment.start()
         self.calls = []
+        self.upstream_status = 200
 
         def model(request):
             self.calls.append(json.loads(request.content))
-            return httpx.Response(200, json={
+            return httpx.Response(self.upstream_status, json={
                 'model': 'mock-model', 'choices': [{'message': {'content': 'FILE_TEST_MARKER'}, 'finish_reason': 'stop'}],
                 'usage': {'prompt_tokens': 10, 'completion_tokens': 4, 'total_tokens': 14},
             })
@@ -80,25 +81,54 @@ class AttachmentWorkflowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 202, response.text)
         return response.json()['id']
 
-    async def test_upload_only_summary_uses_and_records_same_text_and_idempotency(self):
+    def execution_counts(self):
+        with self.db.connect() as conn:
+            return {table: conn.execute(f'SELECT count(*) AS n FROM {table}').fetchone()['n']
+                    for table in ('experiments', 'experiment_cases', 'runs', 'llm_calls', 'evaluations', 'attachments')}
+
+    async def test_upload_only_summary_uses_server_text_without_execution_records(self):
         raw = '  회의 자료\n보이지 않는 문자\u200b와 이모지🙂\nFILE_TEST_MARKER\n'
         item = await self.upload(raw)
         metadata = await self.client.get('/api/attachments/' + item['id'])
         self.assertEqual(metadata.json()['attachment']['text'], raw)
+        counts = self.execution_counts()
         payload = self.summary([item['id']])
         response = await self.client.post('/api/summarize', json=payload)
         self.assertEqual(response.status_code, 200, response.text)
-        detail = (await self.client.get('/api/experiments/' + response.json()['experimentId'])).json()
-        snapshot = detail['runs'][0]['input_snapshot']
-        self.assertEqual(snapshot['inputMode'], 'attachment-v1')
-        self.assertEqual(snapshot['attachments'][0]['text'], raw)
-        self.assertEqual(snapshot['attachments'][0]['sha256'], item['sha256'])
-        self.assertEqual(snapshot['messages'], self.calls[0]['messages'])
+        self.assertEqual(response.json()['database'], {'saved': False, 'mode': 'transient'})
+        self.assertNotIn('experimentId', response.json())
+        self.assertNotIn('runId', response.json())
         self.assertIn(raw, self.calls[0]['messages'][1]['content'])
         self.assertNotIn(raw, self.calls[0]['messages'][0]['content'])
         again = await self.client.post('/api/summarize', json=payload)
         self.assertEqual(again.status_code, 200, again.text)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.calls[0]['messages'], self.calls[1]['messages'])
+        self.assertEqual(self.execution_counts(), counts)
+        self.assertEqual((await self.client.get('/api/attachments/' + item['id'])).json(), metadata.json())
+
+    async def test_attachment_summary_error_retains_upload_without_execution_records(self):
+        item = await self.upload()
+        counts = self.execution_counts()
+        self.upstream_status = 503
+        response = await self.client.post('/api/summarize', json=self.summary([item['id']], body='본문'))
+        self.assertEqual(response.status_code, 502, response.text)
         self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.execution_counts(), counts)
+        self.assertNotIn('runId', response.json())
+        self.assertNotIn('experimentId', response.json())
+
+    async def test_attachment_lookup_failure_prevents_model_call(self):
+        import psycopg
+        item = await self.upload()
+        counts = self.execution_counts()
+        with patch.object(self.app.state.database, 'connect', side_effect=psycopg.OperationalError('private DSN')):
+            response = await self.client.post('/api/summarize', json=self.summary([item['id']]))
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()['error']['code'], 'DATABASE_UNAVAILABLE')
+        self.assertNotIn('private DSN', response.text)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.execution_counts(), counts)
 
     async def test_missing_or_forged_attachments_never_reach_model(self):
         cases = [self.summary([str(uuid4())]), self.summary([{'id': str(uuid4()), 'text': 'forged'}]),

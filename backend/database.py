@@ -388,10 +388,14 @@ class Database:
                     self._call(conn,rid,data['model'],snapshot,config)
         return {'id':eid,'runId':first_run,'existing':False,'messages':first_messages}
 
-    def prepare_summary(self,data,config):
+    def summary_messages(self,subject,body,attachment_ids,config):
+        """Resolve existing uploads without recording ad-hoc summary input/output."""
+        from backend.attachments import load_attachments, compose_attachment_input
         with self.connect() as conn:
-            email=dict(subject=data['email'].get('subject',''),body=data['email']['body'])
-            return self._bundle(conn,data,config,[(email,None,'unknown')],True)
+            conn.execute('SET TRANSACTION READ ONLY')
+            attached = load_attachments(conn, attachment_ids)
+        content = compose_attachment_input(f'제목: {subject}\n\n{body}', attached)
+        return [{'role':'system','content':config['systemPrompt']}, {'role':'user','content':content}]
 
     def enqueue(self,data,config):
         if data.get('attachments'):
@@ -538,6 +542,7 @@ class Database:
             return conn.execute('''SELECT e.id,e.name,e.purpose,e.status,e.created_at,count(r.id)::int AS total,
                 count(r.id) FILTER(WHERE r.status NOT IN ('queued','running'))::int AS finished
                 FROM experiments e LEFT JOIN experiment_cases c ON c.experiment_id=e.id LEFT JOIN runs r ON r.experiment_case_id=c.id
+                WHERE e.purpose IN ('attack','normal','performance')
                 GROUP BY e.id ORDER BY e.created_at DESC LIMIT 100''').fetchall()
 
     def experiment_page(self, page=1, page_size=5, purpose=None, vector='all', model=None, provider=None):

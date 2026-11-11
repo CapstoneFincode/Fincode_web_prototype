@@ -4,7 +4,6 @@ import logging
 import time
 import psycopg
 from fastapi import Request
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from backend.database import Database, DataError
 
@@ -53,21 +52,6 @@ class Persistence:
         if not saved:
             raise DataError('실행 기록이 이미 종료되었습니다. 실험 결과를 확인해 주세요.',409,'RUN_ALREADY_CLOSED')
         return payload,code
-
-    async def summarize(self,data,messages,generate):
-        run=await self.call('prepare_summary',data,self.config)
-        if run['existing']:
-            if not run['response']:
-                raise DataError('동일한 요청이 실행 중이거나 중단되었습니다. 실험 기록을 확인해 주세요.',409,'REQUEST_ALREADY_SUBMITTED')
-            result=run['response']
-        else:
-            try:
-                # The same server-resolved input is both frozen in the DB and sent.
-                result,_=await self.execute({'runId':run['runId'],'model':data['model'],'messages':run['messages']},generate)
-            except DataError as error:
-                # The call may have consumed tokens. Do not automatically repeat it.
-                return JSONResponse({**getattr(error,'observed_result',{}),'httpStatus':503,'error':{'code':'RESULT_SAVE_FAILED','message':error.message+' 모델 요청은 이미 전송되었을 수 있으므로 자동 재시도하지 않습니다.'},'runId':run['runId'],'experimentId':run['id'],'database':{'saved':False}},status_code=503)
-        return JSONResponse(jsonable_encoder({**result,'experimentId':run['id'],'database':{'saved':True}}),status_code=result['httpStatus'])
 
     async def worker_once(self,generate,key):
         if not key():
