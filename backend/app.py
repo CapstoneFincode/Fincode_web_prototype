@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from contextlib import asynccontextmanager
 import secrets
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from backend.persistence import Persistence
 from backend.deployment import is_hosted, validate_hosted
@@ -113,8 +113,15 @@ def validate_summary(payload: dict[str, Any]) -> tuple[str, str, str]:
     if payload.get("defense", "off") != "off":
         raise APIError(400, "UNSUPPORTED_DEFENSE", "방어 기법은 아직 연결되지 않았습니다. 방어 OFF로 실행해 주세요.")
     attachments = payload.get("attachments", [])
-    if not isinstance(attachments, list) or attachments:
-        raise APIError(400, "UNSUPPORTED_ATTACHMENT", "첨부파일 요약은 아직 지원하지 않습니다. 이메일 본문만 사용해 주세요.")
+    if (not isinstance(attachments, list) or len(attachments) > 5
+            or any(not isinstance(value, str) for value in attachments)
+            or len(set(attachments)) != len(attachments)):
+        raise invalid("추출 완료된 첨부파일 ID를 중복 없이 최대 5개 보내 주세요.")
+    try:
+        for identifier in attachments:
+            UUID(identifier)
+    except ValueError:
+        raise invalid("첨부파일 ID 형식을 확인해 주세요.") from None
     model = payload.get("model")
     if not isinstance(model, str) or not model.strip() or len(model) > 200:
         raise invalid("사용할 모델을 선택해 주세요. 모델 이름은 200자 이하여야 합니다.")
@@ -129,8 +136,8 @@ def validate_summary(payload: dict[str, Any]) -> tuple[str, str, str]:
     body = email.get("body")
     if not isinstance(subject, str) or len(subject) > 200:
         raise invalid("제목은 200자 이하여야 합니다.")
-    if not isinstance(body, str) or not body.strip() or len(body) > 30_000:
-        raise invalid("본문은 비어 있지 않은 30,000자 이하의 문자열이어야 합니다.")
+    if not isinstance(body, str) or (not body.strip() and not attachments) or len(body) > 30_000:
+        raise invalid("본문은 30,000자 이하여야 하며, 본문 또는 추출 완료된 첨부파일이 필요합니다.")
     return model, subject, body
 
 
@@ -152,7 +159,7 @@ def summary_text(message: Any) -> str:
     return refusal if isinstance(refusal, str) else ""
 
 
-def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBaseTransport | None = None, database_url: str | None = None, run_worker: bool = True) -> FastAPI:
+def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBaseTransport | None = None, database_url: str | None = None, run_worker: bool = True, attachment_storage=None, attachment_extractor=None) -> FastAPI:
     """Allow an injected HTTP transport only for deterministic offline tests."""
     persistence = Persistence(database_url if database_url is not None else os.environ.get('DATABASE_URL', ''), CONFIG)
 
@@ -171,6 +178,9 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
                     pass
 
     app = FastAPI(lifespan=lifespan, title="Fincode email summarizer", docs_url=None, redoc_url=None, openapi_url=None)
+    from backend.attachments import install_routes
+    attachment_service = install_routes(app, persistence, storage=attachment_storage, extractor=attachment_extractor)
+    app.state.attachments = attachment_service
 
     def configured_key() -> str:
         return (api_key if api_key is not None else os.environ.get("BAZE_API_KEY", "")).strip()
@@ -248,7 +258,8 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             "configured": bool(configured_key()),
             "provider": "baze",
             "promptVersion": CONFIG["version"],
-            "features": {"summarize": True, "attachments": False, "defenses": False, "experiments": bool(persistence.db)},
+            "features": {"summarize": True, "attachments": attachment_service.configured, "defenses": False, "experiments": bool(persistence.db)},
+            "attachmentCapabilities": attachment_service.capabilities(),
             "database": await persistence.health(),
         }
 
@@ -316,10 +327,14 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             raise APIError(503, 'API_KEY_MISSING', '서버에 BAZE_API_KEY를 설정해 주세요.')
         messages = [{'role':'system','content':CONFIG['systemPrompt']}, {'role':'user','content':f'제목: {subject}\n\n{body}'}]
         if not persistence.db:
+            if payload.get('attachments'):
+                raise APIError(503, 'DATABASE_NOT_CONFIGURED', '첨부파일 요약에는 DB 연결이 필요합니다.')
             return await generate(model, messages)
         # Only accepted baseline fields enter the immutable snapshot.
         data = {'kind':'summary','model':model,'email':{'subject':subject,'body':body},
                 'idempotencyKey':payload.get('idempotencyKey',str(uuid4()))}
+        if payload.get('attachments'):
+            data['attachments'] = payload['attachments']
         return await persistence.summarize(data, messages, generate)
 
     persistence.install(app, read_payload, configured_key)

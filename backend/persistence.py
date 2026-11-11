@@ -62,7 +62,8 @@ class Persistence:
             result=run['response']
         else:
             try:
-                result,_=await self.execute({'runId':run['runId'],'model':data['model'],'messages':messages},generate)
+                # The same server-resolved input is both frozen in the DB and sent.
+                result,_=await self.execute({'runId':run['runId'],'model':data['model'],'messages':run['messages']},generate)
             except DataError as error:
                 # The call may have consumed tokens. Do not automatically repeat it.
                 return JSONResponse({**getattr(error,'observed_result',{}),'httpStatus':503,'error':{'code':'RESULT_SAVE_FAILED','message':error.message+' 모델 요청은 이미 전송되었을 수 있으므로 자동 재시도하지 않습니다.'},'runId':run['runId'],'experimentId':run['id'],'database':{'saved':False}},status_code=503)

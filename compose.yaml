@@ -23,6 +23,17 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       # Empty for localhost. Set matching secret on Worker when proxying remotely.
       BACKEND_SHARED_TOKEN: ${BACKEND_SHARED_TOKEN:-}
+      # Local development has a persistent named volume. Hosted deployments
+      # require private S3 storage and reject the local backend.
+      FINCODE_ATTACHMENT_STORAGE: ${FINCODE_ATTACHMENT_STORAGE:-local}
+      FINCODE_ATTACHMENT_DIRECTORY: /var/lib/fincode/attachments
+      FINCODE_ATTACHMENT_S3_ENDPOINT: ${FINCODE_ATTACHMENT_S3_ENDPOINT:-}
+      FINCODE_ATTACHMENT_S3_BUCKET: ${FINCODE_ATTACHMENT_S3_BUCKET:-}
+      FINCODE_ATTACHMENT_S3_ACCESS_KEY_ID: ${FINCODE_ATTACHMENT_S3_ACCESS_KEY_ID:-}
+      FINCODE_ATTACHMENT_S3_SECRET_ACCESS_KEY: ${FINCODE_ATTACHMENT_S3_SECRET_ACCESS_KEY:-}
+      FINCODE_ATTACHMENT_S3_REGION: ${FINCODE_ATTACHMENT_S3_REGION:-auto}
+    volumes:
+      - fincode_attachments:/var/lib/fincode/attachments
     depends_on:
       postgres:
         condition: service_healthy
@@ -31,3 +42,4 @@ services:
       - no-new-privileges:true
 volumes:
   fincode_pg:
+  fincode_attachments:
