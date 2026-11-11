@@ -549,7 +549,7 @@ async function showDatabaseExperiment(id){
     if(experiment.purpose==='attack'){
       if(attackReportState.id!==id)attackReportState={id,view:{}};
       if($('#modal').open)$('#modal').close();
-      modal(experiment.name,`<p class="small muted">${tag(jobStatus(experiment.status))} ${tag('보안 OFF')} ${tag('DB 보관')} · 카테고리를 선택한 뒤 실행 로그를 펼쳐 보세요.</p><div id="attack-report-root"></div>`,`<button class="btn" data-action="db-detail" data-id="${esc(id)}">상태 새로고침</button><button class="btn" id="db-export">실험 JSON 내보내기</button>`,'attack-report-modal');
+      modal(experiment.name,`<div class="ar-report-toolbar"><p class="small muted">${tag(jobStatus(experiment.status))} ${tag('보안 OFF')} ${tag('DB 보관')} · 카테고리를 선택한 뒤 실행 로그를 펼쳐 보세요.</p><button class="btn" data-action="db-detail" data-id="${esc(id)}">상태 새로고침</button></div><div id="attack-report-root"></div>`,`<button class="btn" id="db-export">실험 JSON 내보내기</button>`,'attack-report-modal');
       mountAttackReport($('#attack-report-root'),detail,{categories:state.categories,initialView:attackReportState.view,onViewChange:view=>{attackReportState={id,view};},renderReview:attackReviewForm,onRender:root=>bindDatabaseJudgments(root,id)});
       $('#db-export').addEventListener('click',()=>download('fincode-experiment-'+id+'.json',JSON.stringify(detail,null,2)));
       return;

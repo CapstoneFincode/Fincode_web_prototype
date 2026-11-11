@@ -1,6 +1,9 @@
 /* Shared, scoped styles for stored experiment results and the sample screen. */
 #modal.attack-report-modal{width:min(1240px,calc(100vw - 36px));max-width:1240px}
 #modal.attack-report-modal .dialog-body{padding:24px;background:#f7f9fc}
+#modal.attack-report-modal .ar-report-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px}
+#modal.attack-report-modal .ar-report-toolbar p{flex:1 1 280px;margin:0}
+#modal.attack-report-modal .ar-report-toolbar>.btn{flex:none;margin-left:auto;white-space:nowrap}
 .attack-report{--ar-ink:#263650;--ar-muted:#71819a;--ar-line:#e2e8f2;--ar-blue:#315ed6;color:var(--ar-ink);font-size:13px;line-height:1.65}
 .attack-report *{box-sizing:border-box}.attack-report button,.attack-report input{font:inherit}.attack-report button{cursor:pointer}.attack-report button:focus-visible,.attack-report summary:focus-visible{outline:3px solid #8aa9f1;outline-offset:3px}
 .ar-demo{border:1px solid #d8e5fd;background:#edf3ff;color:#506f9c;border-radius:9px;padding:12px 16px;margin-bottom:20px;font-size:12px}
