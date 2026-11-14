@@ -1,0 +1,10 @@
+snapshots/
+.venv/
+cache/
+tmp/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.zip
+results/*/rows.json

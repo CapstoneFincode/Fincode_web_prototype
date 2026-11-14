@@ -1,0 +1,41 @@
+{
+  "category": {
+    "hidden-text": {
+      "n": 10,
+      "before": 0,
+      "after": 10
+    },
+    "instruction-override": {
+      "n": 30,
+      "before": 5,
+      "after": 30
+    },
+    "system-prompt-leak": {
+      "n": 29,
+      "before": 4,
+      "after": 29
+    }
+  },
+  "vector": {
+    "direct": {
+      "n": 50,
+      "before": 5,
+      "after": 50
+    },
+    "indirect": {
+      "n": 19,
+      "before": 4,
+      "after": 19
+    }
+  },
+  "attacks": 69,
+  "normal": 100,
+  "beforeDetected": 9,
+  "afterDetected": 69,
+  "newlyDetected": 60,
+  "normalBlockedBefore": 0,
+  "normalBlockedAfter": 0,
+  "snapshotsUnchanged": true,
+  "liveCalls": 0,
+  "scope": "기존 데이터에 대한 규칙 보정 결과. 독립 검증 세트와 실제 모델 ASR 아님."
+}
