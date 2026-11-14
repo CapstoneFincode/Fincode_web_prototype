@@ -53,7 +53,7 @@ class APITest(unittest.IsolatedAsyncioTestCase):
                     "configured": configured,
                     "provider": "baze",
                     "promptVersion": CONFIG["version"],
-                    "features": {"summarize": True, "attachments": False, "defenses": False, "experiments": False},
+                    "features": {"summarize": True, "attachments": False, "defenses": True, "experiments": False},
                     "database": {"configured": False,"ready":False},
                 })
                 self.assertEqual(result.headers["cache-control"], "no-store")
@@ -198,9 +198,9 @@ class APITest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.upstream_calls, [])
                 self.assertNotIn("secret-body", result.text)
 
-    async def test_unimplemented_defenses_and_invalid_attachment_ids_are_rejected(self):
+    async def test_invalid_defenses_and_attachment_ids_are_rejected(self):
         for change, code in [
-            ({"defense": "filter"}, "UNSUPPORTED_DEFENSE"),
+            ({"defense": "unknown-mode"}, "UNSUPPORTED_DEFENSE"),
             ({"defense": None}, "UNSUPPORTED_DEFENSE"),
             ({"attachments": ["file.pdf"]}, "INVALID_REQUEST"),
             ({"attachments": None}, "INVALID_REQUEST"),

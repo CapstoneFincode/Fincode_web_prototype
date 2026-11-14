@@ -18,6 +18,7 @@ import secrets
 from uuid import UUID
 
 from backend.persistence import Persistence
+from backend.defenses import DefenseGateway, DefenseSettings
 from backend.deployment import is_hosted, validate_hosted
 from urllib.parse import urlsplit
 
@@ -110,8 +111,10 @@ async def read_payload(request: Request) -> dict[str, Any]:
 
 
 def validate_summary(payload: dict[str, Any]) -> tuple[str, str, str]:
-    if payload.get("defense", "off") != "off":
-        raise APIError(400, "UNSUPPORTED_DEFENSE", "방어 기법은 아직 연결되지 않았습니다. 방어 OFF로 실행해 주세요.")
+    try:
+        DefenseSettings.from_mode(payload.get("defense", "off"))
+    except ValueError:
+        raise APIError(400, "UNSUPPORTED_DEFENSE", "방어 모드는 off/filter/separate/both 중 선택해 주세요.") from None
     attachments = payload.get("attachments", [])
     if (not isinstance(attachments, list) or len(attachments) > 5
             or any(not isinstance(value, str) for value in attachments)
@@ -258,7 +261,7 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             "configured": bool(configured_key()),
             "provider": "baze",
             "promptVersion": CONFIG["version"],
-            "features": {"summarize": True, "attachments": attachment_service.configured, "defenses": False, "experiments": bool(persistence.db)},
+            "features": {"summarize": True, "attachments": attachment_service.configured, "defenses": True, "experiments": bool(persistence.db)},
             "attachmentCapabilities": attachment_service.capabilities(),
             "database": await persistence.health(),
         }
@@ -319,6 +322,8 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             "warnings": warnings,
         }
 
+    defense_gateway = DefenseGateway()
+
     @app.post('/api/summarize')
     async def summarize(request: Request):
         payload = await read_payload(request)
@@ -333,7 +338,7 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
         # Ad-hoc summaries are transient. They never enter the durable experiment
         # queue or its input/output/call logs, even when a DB is configured.
         # No replay cache or automatic retry: each explicit request calls once.
-        result = await generate(model, messages)
+        result = await defense_gateway.execute(generate, model, messages, CONFIG['maxTokens'], payload.get('defense', 'off'))
         return {**result, 'database': {'saved': False, 'mode': 'transient'}}
 
     persistence.install(app, read_payload, configured_key)
