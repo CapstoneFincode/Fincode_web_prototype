@@ -261,7 +261,7 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             "configured": bool(configured_key()),
             "provider": "baze",
             "promptVersion": CONFIG["version"],
-            "features": {"summarize": True, "attachments": attachment_service.configured, "defenses": True, "experiments": bool(persistence.db)},
+            "features": {"summarize": True, "attachments": attachment_service.configured, "defenses": True, "durableDefenses": True, "experiments": bool(persistence.db)},
             "attachmentCapabilities": attachment_service.capabilities(),
             "database": await persistence.health(),
         }

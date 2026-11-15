@@ -75,8 +75,11 @@ def validate_submission(data):
         raise DataError('평가 이름, 데이터셋, 이메일, 모델과 방어 OFF 설정을 확인해 주세요.')
     if data.get('datasetId')!=DATASET_ID:
         raise DataError('지원하는 합성 정상 이메일 데이터셋을 선택해 주세요.')
-    if data.get('defense')!='off':
-        raise DataError('이번 성능 평가는 방어 OFF만 지원합니다.',400,'DEFENSE_NOT_SUPPORTED')
+    try:
+        from backend.defenses.durable import mode
+        selected_defense=mode(data.get('defense'))
+    except ValueError:
+        raise DataError('방어 모드를 확인해 주세요.',400,'DEFENSE_NOT_SUPPORTED') from None
     if type(data.get('repeat',1)) is not int or data.get('repeat',1)!=1:
         raise DataError('성능 평가는 이메일·모델 조합마다 한 번만 실행합니다.')
     models=data.get('models')
@@ -95,7 +98,7 @@ def validate_submission(data):
     if len(set(ids))!=len(ids) or len(ids)*len(models)>500:
         raise DataError('서로 다른 이메일을 선택하고 전체 호출 수를 500회 이하로 설정해 주세요.')
     return {'name':text(data.get('name','정상 이메일 성능 평가'),'평가 이름',200),
-            'datasetId':DATASET_ID,'emailIds':ids,'models':models,'defense':'off','repeat':1,
+            'datasetId':DATASET_ID,'emailIds':ids,'models':models,'defense':selected_defense,'repeat':1,
             'idempotencyKey':text(data.get('idempotencyKey'),'요청 중복 방지 키',150)}
 
 
@@ -136,7 +139,7 @@ def enqueue(db,data,config):
         preliminary=any(row['reference_review_status']!='reviewed' for _,row in chosen)
         plan={'datasetId':DATASET_ID,'datasetSha256':sha,'datasetVersion':version,
               'models':data['models'],'emailIds':[str(row['id']) for _,row in chosen],
-              'sourceIds':[source['id'] for source,_ in chosen],'defense':'off','repeat':1,
+              'sourceIds':[source['id'] for source,_ in chosen],'defense':data['defense'],'repeat':1,
               'concurrency':1,'automaticRetries':0,'order':'email-first-rotating-model-v1',
               'preliminary':preliminary,'totalCalls':len(chosen)*len(data['models'])}
         insert(conn,'experiments',{'id':eid,'name':data['name'],'purpose':'performance','status':'queued',
@@ -144,6 +147,8 @@ def enqueue(db,data,config):
                 'qualityRequired':True,'referenceDraftAllowed':True},
             'execution_plan':plan,'environment_snapshot':{'runtime':'python-fastapi','promptVersion':config['version']},
             'created_by':db.actor,'submission_key':key,'submission_sha256':fingerprint,'started_at':now})
+        from backend.defenses.durable import freeze,profile
+        defense_id=profile(conn,data['defense'],db.actor)
         number=0
         for email_index,(original,row) in enumerate(chosen):
             # Balance first/last model positions without changing the requested comparison order.
@@ -164,6 +169,7 @@ def enqueue(db,data,config):
                       {'role':'user','content':f"제목: {row['subject']}\n\n{row['body']}"}]
             snapshot={'email':{'subject':row['subject'],'body':row['body']},'messages':messages,
                       'inputMode':'email-v1','injectionStrategy':'none','performance':performance}
+            snapshot=freeze(snapshot,data['defense'])
             for model in model_order:
                 number+=1
                 cid,rid=str(uuid4()),str(uuid4())
@@ -172,12 +178,12 @@ def enqueue(db,data,config):
                     'provider':'baze','requested_model':model,'prompt_version':config['version'],
                     'system_prompt':config['systemPrompt'],'inference_settings':{'max_tokens':config['maxTokens'],'stream':False},
                     'input_snapshot':snapshot,'input_sha256':digest(snapshot),'credential_alias':'server-key-1'})
-                insert(conn,'runs',{'id':rid,'experiment_case_id':cid,'security_gateway_enabled':False,
+                insert(conn,'runs',{'id':rid,'experiment_case_id':cid,'security_gateway_enabled':data['defense']!='off','defense_profile_id':defense_id,
                     'idempotency_key':rid,'status':'queued','environment_snapshot':{'runtime':'python-fastapi'}})
     return {'id':eid,'existing':False}
 
 
-def score_result(conn,case,rid,response):
+def score_result(conn,case,rid,response,blocked=False):
     from backend.summary_quality import VERSION, evaluate_summary
     frozen=case['input_snapshot']['performance']
     version=frozen['scorerVersion']
@@ -192,6 +198,11 @@ def score_result(conn,case,rid,response):
             'details':{'errorCode':'SCORING_UNAVAILABLE','rougeL':None,'factCoverage':None,
                        'confirmedFacts':0,'totalFacts':len(frozen['requiredFacts']),
                        'needsReviewFacts':len(frozen['requiredFacts'])}}
+    if blocked or evaluation['details'].get('responseSignal')=='refusal_candidate':
+        evaluation.update(score=0.0,decision_status='determinate')
+        evaluation['details']['reason']='pre_model_block' if blocked else 'model_refusal'
+        evaluation['details']['rougeL']={'f1':0.0}
+        evaluation['evaluator_version']+=':preblock-zero-v1'
     insert(conn,'evaluations',{'id':str(uuid4()),'run_id':rid,'metric':'summary_quality','judge_type':'rule',
         'rubric_snapshot':{'datasetId':frozen['datasetId'],'datasetSha256':frozen['datasetSha256'],
             'groundTruthId':frozen['groundTruthId'],'groundTruthVersion':frozen['groundTruthVersion'],
@@ -238,15 +249,17 @@ def experiment(conn,eid):
 
 def result_rows(conn,ids):
     # No bodies, summaries, provider payloads or per-case queries in progress polling.
-    return conn.execute('''SELECT c.experiment_id,c.email_case_id,c.requested_model,r.status,call.latency_ms,
-        call.input_tokens,call.output_tokens,call.total_tokens,
+    return conn.execute('''SELECT c.experiment_id,c.email_case_id,c.requested_model,r.status,CASE WHEN r.status='blocked' THEN 0 ELSE call.latency_ms END AS latency_ms,
+        CASE WHEN r.status='blocked' THEN 0 ELSE call.input_tokens END AS input_tokens,
+        CASE WHEN r.status='blocked' THEN 0 ELSE call.output_tokens END AS output_tokens,
+        CASE WHEN r.status='blocked' THEN 0 ELSE call.total_tokens END AS total_tokens,
         v.score,v.decision_status,v.details
         FROM experiment_cases c JOIN runs r ON r.experiment_case_id=c.id
         LEFT JOIN llm_calls call ON call.run_id=r.id AND call.call_number=1
         LEFT JOIN LATERAL (SELECT score,decision_status,
             jsonb_build_object('rougeL',details->'rougeL','factCoverage',details->'factCoverage',
                 'confirmedFacts',details->'confirmedFacts','totalFacts',details->'totalFacts',
-                'needsReviewFacts',details->'needsReviewFacts') AS details
+                'needsReviewFacts',details->'needsReviewFacts','responseSignal',details->'responseSignal') AS details
             FROM evaluations WHERE run_id=r.id AND metric='summary_quality' ORDER BY created_at DESC,id DESC LIMIT 1) v ON true
         WHERE c.experiment_id=ANY(%s::uuid[])''',(ids,)).fetchall()
 
@@ -266,14 +279,15 @@ def summary(record,rows):
     def counts(selected):
         return {'total':len(selected),'finished':sum(row['status'] in TERMINAL for row in selected),
                 'succeeded':sum(row['status']=='succeeded' for row in selected),
-                'failed':sum(row['status'] in ('failed','timed_out','blocked') for row in selected),
+                'failed':sum(row['status'] in ('failed','timed_out') for row in selected),
+                'blocked':sum(row['status']=='blocked' for row in selected),
                 'cancelled':sum(row['status']=='cancelled' for row in selected),
                 'running':sum(row['status']=='running' for row in selected),
                 'queued':sum(row['status']=='queued' for row in selected)}
     def quality_values(selected,field):
         result=[]
         for row in selected:
-            if row['status']!='succeeded' or row['decision_status']!='determinate' or row['score'] is None:
+            if row['status'] not in ('succeeded','blocked') or row['decision_status']!='determinate' or row['score'] is None:
                 continue
             details=row['details'] or {}
             value=(details.get('rougeL') or {}).get('f1') if field=='rougeL' else details.get(field)
@@ -282,12 +296,14 @@ def summary(record,rows):
         return result
     model_results=[]
     for model,selected in by_model.items():
-        completed=[row for row in selected if row['status']=='succeeded']
+        completed=[row for row in selected if row['status'] in ('succeeded','blocked')]
         paired=[row for row in completed if str(row['email_case_id']) in common]
         latencies=[row['latency_ms'] for row in completed if row['latency_ms'] is not None]
         model_results.append({'model':model,**counts(selected),
             'gradedCount':sum(row['decision_status']=='determinate' and row['score'] is not None for row in completed),
             'meanRougeL':average(quality_values(completed,'rougeL')),
+            'fpr':sum(row['status']=='blocked' or (row.get('details') or {}).get('responseSignal')=='refusal_candidate' for row in completed)/len(completed) if completed else None,
+            'rejected':sum(row['status']=='blocked' or (row.get('details') or {}).get('responseSignal')=='refusal_candidate' for row in completed),
             'meanFactCoverage':average(quality_values(completed,'factCoverage')),
             'confirmedFacts':sum((row['details'] or {}).get('confirmedFacts') or 0 for row in completed),
             'totalFacts':sum((row['details'] or {}).get('totalFacts') or 0 for row in completed),
@@ -301,7 +317,7 @@ def summary(record,rows):
                       'latencyMsMean':average(row['latency_ms'] for row in paired),
                       'totalTokensMean':average(row['total_tokens'] for row in paired)}})
     return {'id':str(record['id']),'name':record['name'],'status':record['status'],'datasetId':DATASET_ID,
-        'createdAt':record['created_at'],'models':models,'defense':'off',**counts(rows),
+        'createdAt':record['created_at'],'models':models,'defense':record['execution_plan'].get('defense','off'),**counts(rows),
         'preliminary':record['execution_plan'].get('preliminary',True),
         'commonCompletedEmails':len(common),'modelResults':model_results,'stopReason':record['stop_reason']}
 
@@ -348,8 +364,9 @@ def cases(db,eid,offset=0,limit=20):
             'emailId':frozen['emailId'],'requestedModel':row['requested_model'],'returnedModel':row['returned_model'],
             'status':row['status'],'summary':row['final_output'],'reference':frozen['reference'],'body':snapshot['email']['body'],
             'finishReason':row['finish_reason'],'warnings':row['warnings'] if isinstance(row['warnings'],list) else [],
-            'usage':{'inputTokens':row['input_tokens'],'outputTokens':row['output_tokens'],'totalTokens':row['total_tokens']},
-            'latencyMs':row['latency_ms'],
+            'usage':{'inputTokens':0 if row['status']=='blocked' else row['input_tokens'],'outputTokens':0 if row['status']=='blocked' else row['output_tokens'],'totalTokens':0 if row['status']=='blocked' else row['total_tokens']},
+            'latencyMs':0 if row['status']=='blocked' else row['latency_ms'],
+            'defense':snapshot.get('defenseMode','off'),'blocked':row['status']=='blocked',
             'error':{'code':row['error_code'],'message':row['error_message']} if row['error_code'] else None,
             'quality':quality,'referenceReviewStatus':frozen['referenceReviewStatus']})
     return {'total':total,'offset':offset,'limit':limit,'cases':output}

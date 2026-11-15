@@ -166,7 +166,7 @@ test('DB datasets load even without a model key and allow normal emails without 
   const datasets={normal:[{...seeds.normalSeeds[0],id:'db-normal',dbId:'db-uuid',provenance:'user',reviewStatus:'reviewed',reference:''}],attacks:[]};
   const calls=[];const a=app(null,async(url)=>{calls.push(url);return response(url.endsWith('health')?{configured:false,database:{configured:true,ready:true}}:datasets);});
   await a.refreshConnection();assert.deepEqual(calls,['/api/health','/api/data']);assert.equal(a.state.dbReady,true);assert.equal(a.state.connection,'missing');assert.equal(a.gtCount(),1);assert.equal(a.state.selectedSample,'db-normal');
-  assert.match(a.pages.data(),/팀 공용 PostgreSQL/);assert.match(a.pages.experiments(),/실제 실험 실행/);assert.match(a.pages.experiments(),/ON · 방어 구현 후 지원/);
+  assert.match(a.pages.data(),/팀 공용 PostgreSQL/);assert.match(a.pages.experiments(),/실제 실험 실행/);assert.match(a.pages.experiments(),/입력 필터링/);
   const d=backup();d.normal[0].reference='';assert.doesNotThrow(()=>a.validateImport(d));
 });
 test('configured DB outage stays explicit and cannot present the local experiment planner as live',async()=>{
@@ -176,4 +176,9 @@ test('configured DB outage stays explicit and cannot present the local experimen
 test('DB records and experiment names are escaped in results',()=>{
   const a=app();Object.assign(a.state,{dbConfigured:true,dbReady:true,jobs:[{id:'x',name:'<img src=x>',purpose:'attack',status:'completed',finished:1,total:1}]});
   assert.match(a.pages.results(),/웹에서 진행한 실험/);assert.match(a.pages.results(),/&lt;img src=x&gt;/);assert.doesNotMatch(a.pages.results(),/<img src=x>/);
+});
+
+ test('preblocked summaries display zero usage without claiming a model call',async()=>{
+ const a=app(null,async()=>response({...liveResult(),mode:'blocked',defense:'filter',blocked:true,defenseResult:{modelCalled:false},summary:'입력 필터에 의해 차단되었습니다.',usage:{inputTokens:0,outputTokens:0,totalTokens:0},latencyMs:0}));enable(a);a.state.summaryDefense='filter';
+ await a.runSummary();assert.equal(a.state.emailError,null);assert.match(a.pages.email(),/모델 미호출/);
 });

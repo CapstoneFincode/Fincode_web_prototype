@@ -53,7 +53,7 @@ class APITest(unittest.IsolatedAsyncioTestCase):
                     "configured": configured,
                     "provider": "baze",
                     "promptVersion": CONFIG["version"],
-                    "features": {"summarize": True, "attachments": False, "defenses": True, "experiments": False},
+                    "features": {"summarize": True, "attachments": False, "defenses": True, "durableDefenses": True, "experiments": False},
                     "database": {"configured": False,"ready":False},
                 })
                 self.assertEqual(result.headers["cache-control"], "no-store")

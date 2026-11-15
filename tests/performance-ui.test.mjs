@@ -402,3 +402,11 @@ test('malformed progress and detail responses expose errors without manufacturin
   assert.match(a.performanceView('single').caseError,/상세 결과 형식/);
   assert.equal(pollTimers(h).length,0);
 });
+
+test('defense panel enables four modes only for a capable backend',()=>{
+  const {api:a}=app();a.state.durableDefenses=true;a.updateSingleEvaluationDraft('defense','filter');
+  const html=a.evaluationDefensePanel('single-evaluation-defense');
+  assert.match(html,/value="filter" checked/);assert.doesNotMatch(html,/value="separate"[^>]*disabled/);
+  assert.match(a.performanceModelTable(summary({modelResults:[{model:'model-a',total:5,fpr:.2,rejected:1,tokens:{},common:{}}]})),/20\.0%/);
+  a.state.durableDefenses=false;a.state.singleEvaluationDraft.defense='off';assert.match(a.evaluationDefensePanel('single-evaluation-defense'),/value="filter"[^>]*disabled/);
+});

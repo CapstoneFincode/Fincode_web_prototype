@@ -34,7 +34,11 @@ class Persistence:
     async def execute(self, run, generate):
         start=time.perf_counter()
         try:
-            payload=await generate(run['model'],run['messages'],run.get('maxTokens',self.config['maxTokens']))
+            if run.get('defensePlan'):
+                from backend.defenses import DefenseGateway
+                payload=await DefenseGateway().execute_prepared(generate,run['model'],run['defensePlan'],run.get('maxTokens',self.config['maxTokens']))
+            else:
+                payload=await generate(run['model'],run['messages'],run.get('maxTokens',self.config['maxTokens']))
             status,code='succeeded',200
         except Exception as error:
             # APIError is owned by app.py; avoid circular imports and never save a raw exception/key.
@@ -144,8 +148,8 @@ class Persistence:
                                    5 if pageSize is None else pageSize,purpose,vector,model,provider)
 
         @app.get('/api/results/models')
-        async def model_results(purpose:str='attack',vector:str='all'):
-            return await self.call('model_results',purpose,vector)
+        async def model_results(purpose:str='attack',vector:str='all',defense:str='off'):
+            return await self.call('model_results',purpose,vector,defense)
 
         @app.post('/api/experiments',status_code=202)
         async def enqueue(request:Request):

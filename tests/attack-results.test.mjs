@@ -101,3 +101,8 @@ test('missing original reveals a readable fallback without discarding OCR',()=>{
   mountAttackReport(root,{runs:[run('1')]});onerror();
   assert.equal(img.hidden,true);assert.equal(note.hidden,false);
 });
+
+test('preblocked attack inputs are explicitly marked as never sent',()=>{
+ const r=run('blocked','override',false,{status:'blocked',input_snapshot:{messages:[],defensePlan:{originalMessages:[{role:'user',content:'차단 원문'}]}}});
+ assert.equal(requestMessages(r).source,'blocked');assert.match(renderAttackRun(r,0),/모델에 전송하지 않은 원문/);
+});

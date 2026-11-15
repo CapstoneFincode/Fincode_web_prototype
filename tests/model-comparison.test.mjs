@@ -284,3 +284,11 @@ test('add and remove actions refresh model controls without rerendering the page
   assert.equal(context.shellCalls,0);
   assert.equal(calls.length,0);
 });
+
+test('defense controls update independently when durable backend is available',()=>{
+  const {api:a,calls}=app();a.state.durableDefenses=true;
+  a.updateComparisonDraft('defense','both');a.updateSingleEvaluationDraft('defense','separate');
+  assert.equal(a.state.comparisonDraft.defense,'both');assert.equal(a.state.singleEvaluationDraft.defense,'separate');
+  a.state.summaryDefense='filter';assert.equal(a.summaryRequest().defense,'filter');assert.equal(calls.length,0);
+  a.state.performance.views.comparison.pendingSubmission={defense:'both'};a.updateComparisonDraft('defense','off');assert.equal(a.state.comparisonDraft.defense,'both');
+});

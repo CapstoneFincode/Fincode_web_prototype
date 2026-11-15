@@ -211,3 +211,9 @@ test('attack path is available only for attack results and model selection remai
     assert.match(html,/<label\b[^>]*for="live-result-vector"/);assert.match(html,/<label\b[^>]*for="live-result-model"/);
   }
 });
+
+test('selected defense is sent to model metrics without mixing OFF records',async()=>{
+  const a=app(()=>response({purpose:'attack',vector:'all',defense:'both',generatedAt:'2026-11-15',models:[]}));
+  a.state.resultReport.defense='both';await a.refreshResultMetrics();
+  assert.equal(a.requests[0].url,'/api/results/models?purpose=attack&vector=all&defense=both');assert.equal(a.state.resultReport.data.defense,'both');
+});

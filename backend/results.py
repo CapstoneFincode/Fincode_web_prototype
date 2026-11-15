@@ -1,7 +1,7 @@
 """Read-only pagination and model summaries for recorded web experiments.
 
 These queries never inspect prompt/response bodies or alter runs/evaluations.
-Execution types stay separate and only defense-OFF runs contribute to metrics.
+Execution types and selected defense modes stay separate in metrics.
 Legacy email summaries remain stored, but are outside experiment reporting.
 """
 from datetime import datetime, timezone
@@ -69,11 +69,14 @@ MODEL_QUERY = '''WITH selected AS (
     FROM runs r JOIN experiment_cases c ON c.id=r.experiment_case_id
     JOIN experiments e ON e.id=c.experiment_id
     LEFT JOIN attack_scenarios s ON s.id=c.attack_scenario_id
-    WHERE e.purpose=%s AND NOT r.security_gateway_enabled
+    WHERE e.purpose=%s AND coalesce(c.input_snapshot->>'defenseMode',CASE WHEN NOT r.security_gateway_enabled THEN 'off' ELSE 'legacy' END)=%s
       AND (%s='all' OR (c.expected_label='attack'
         AND coalesce(c.input_snapshot#>>'{attackScenario,vector}',s.vector)=%s))
 ), measured AS (
-    SELECT r.*,calls.latency_ms,calls.input_tokens,calls.output_tokens,calls.total_tokens,
+    SELECT r.*,CASE WHEN r.status='blocked' THEN 0 ELSE calls.latency_ms END AS latency_ms,
+        CASE WHEN r.status='blocked' THEN 0 ELSE calls.input_tokens END AS input_tokens,
+        CASE WHEN r.status='blocked' THEN 0 ELSE calls.output_tokens END AS output_tokens,
+        CASE WHEN r.status='blocked' THEN 0 ELSE calls.total_tokens END AS total_tokens,
         v.decision_status,v.boolean_value,v.score,v.evaluator_version,v.judge_type
     FROM selected r
     LEFT JOIN LATERAL (
@@ -119,36 +122,41 @@ SELECT m.provider,m.requested_model AS model,
         AND decision_status='indeterminate')::int AS attack_indeterminate,
     count(*) FILTER (WHERE expected_label='attack' AND status IN ('succeeded','blocked')
         AND (decision_status IS NULL OR decision_status='not_applicable'))::int AS attack_unjudged,
-    avg(latency_ms) FILTER (WHERE status='succeeded')::float8 AS latency_mean,
-    count(latency_ms) FILTER (WHERE status='succeeded')::int AS latency_count,
-    avg(input_tokens) FILTER (WHERE status='succeeded')::float8 AS input_mean,
-    avg(output_tokens) FILTER (WHERE status='succeeded')::float8 AS output_mean,
-    avg(total_tokens) FILTER (WHERE status='succeeded')::float8 AS total_mean,
-    count(input_tokens) FILTER (WHERE status='succeeded')::int AS input_count,
-    count(output_tokens) FILTER (WHERE status='succeeded')::int AS output_count,
-    count(total_tokens) FILTER (WHERE status='succeeded')::int AS total_count,
+    count(*) FILTER (WHERE expected_label='normal' AND status IN ('succeeded','blocked') AND decision_status='determinate')::int AS normal_judged,
+    count(*) FILTER (WHERE expected_label='normal' AND status IN ('succeeded','blocked') AND decision_status='determinate' AND boolean_value IS TRUE)::int AS normal_rejected,
+    avg(latency_ms) FILTER (WHERE status IN ('succeeded','blocked'))::float8 AS latency_mean,
+    count(latency_ms) FILTER (WHERE status IN ('succeeded','blocked'))::int AS latency_count,
+    avg(input_tokens) FILTER (WHERE status IN ('succeeded','blocked'))::float8 AS input_mean,
+    avg(output_tokens) FILTER (WHERE status IN ('succeeded','blocked'))::float8 AS output_mean,
+    avg(total_tokens) FILTER (WHERE status IN ('succeeded','blocked'))::float8 AS total_mean,
+    count(input_tokens) FILTER (WHERE status IN ('succeeded','blocked'))::int AS input_count,
+    count(output_tokens) FILTER (WHERE status IN ('succeeded','blocked'))::int AS output_count,
+    count(total_tokens) FILTER (WHERE status IN ('succeeded','blocked'))::int AS total_count,
     count(DISTINCT scenario_key)::int AS scenario_count,
     count(DISTINCT attack_scenario_id)::int AS scenario_version_count,
     array_agg(DISTINCT prompt_version ORDER BY prompt_version) AS prompt_versions,
     array_agg(DISTINCT input_mode ORDER BY input_mode) AS input_modes,
     count(DISTINCT inference_settings)::int AS inference_settings_count,
     min(m.created_at) AS first_run_at,max(m.created_at) AS last_run_at,
-    count(*) FILTER (WHERE status='succeeded' AND decision_status='determinate' AND score IS NOT NULL)::int AS graded_count,
-    avg(score) FILTER (WHERE status='succeeded' AND decision_status='determinate')::float8 AS mean_rouge_l,
+    count(*) FILTER (WHERE status IN ('succeeded','blocked') AND decision_status='determinate' AND score IS NOT NULL)::int AS graded_count,
+    avg(score) FILTER (WHERE status IN ('succeeded','blocked') AND decision_status='determinate')::float8 AS mean_rouge_l,
     coalesce((SELECT models FROM returned x WHERE x.provider=m.provider AND x.requested_model=m.requested_model),ARRAY[]::text[]) AS returned_models,
     coalesce((SELECT jsonb_object_agg(v.evaluator_version,v.count) FROM versions v
         WHERE v.provider=m.provider AND v.requested_model=m.requested_model),'{}'::jsonb) AS evaluator_counts
 FROM measured m GROUP BY m.provider,m.requested_model ORDER BY m.requested_model,m.provider'''
 
 
-def model_results(db, purpose='attack', vector='all'):
+def model_results(db, purpose='attack', vector='all', defense='off'):
+    from backend.defenses.durable import mode
+    try:defense=mode(defense)
+    except ValueError:raise DataError('방어 모드를 확인해 주세요.') from None
     purpose, vector, _ = filters(purpose, vector)
     if purpose is None:
         raise DataError('모델 지표는 실험 종류를 하나 선택해 주세요.')
     metric = {'attack':'attack_success', 'normal':'normal_rejection', 'performance':'summary_quality'}.get(purpose, '')
     with db.connect() as conn:
         conn.execute('SET TRANSACTION READ ONLY')
-        rows = conn.execute(MODEL_QUERY, (purpose, vector, vector, metric)).fetchall()
+        rows = conn.execute(MODEL_QUERY, (purpose, defense, vector, vector, metric)).fetchall()
     models = []
     for row in rows:
         judged = row['attack_successes'] + row['attack_failures']
@@ -166,7 +174,8 @@ def model_results(db, purpose='attack', vector='all'):
             'inferenceSettingsCount':row['inference_settings_count'],
             'evaluatorVersions':sorted(row['evaluator_counts']), 'evaluatorVersionCounts':row['evaluator_counts'],
             'firstRunAt':row['first_run_at'], 'lastRunAt':row['last_run_at'],
+            'normal':{'judged':row.get('normal_judged',0),'rejected':row.get('normal_rejected',0),'fpr':100*row.get('normal_rejected',0)/row['normal_judged'] if row.get('normal_judged') else None} if purpose=='normal' else None,
             'quality':{'gradedCount':row['graded_count'], 'meanRougeL':row['mean_rouge_l']} if purpose=='performance' else None,
         })
-    return {'purpose':purpose, 'vector':vector, 'defense':'off',
+    return {'purpose':purpose, 'vector':vector, 'defense':defense,
             'generatedAt':datetime.now(timezone.utc), 'models':models}
