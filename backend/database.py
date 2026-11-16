@@ -565,9 +565,9 @@ class Database:
                 WHERE e.purpose IN ('attack','normal','performance')
                 GROUP BY e.id ORDER BY e.created_at DESC LIMIT 100''').fetchall()
 
-    def experiment_page(self, page=1, page_size=5, purpose=None, vector='all', model=None, provider=None):
+    def experiment_page(self, page=1, page_size=5, purpose=None, vector='all', model=None, provider=None, experiment_group='all'):
         from backend.results import experiment_page
-        return experiment_page(self, page, page_size, purpose, vector, model, provider)
+        return experiment_page(self, page, page_size, purpose, vector, model, provider, experiment_group)
 
     def model_results(self, purpose='attack', vector='all', defense='off'):
         from backend.results import model_results

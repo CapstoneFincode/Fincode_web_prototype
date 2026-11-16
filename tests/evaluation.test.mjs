@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import * as seeds from '../public/data.js';
 import * as categoryTools from '../public/categories.js';
-import {mountAttackReport} from '../public/attack-results.js';
+import {mountAttackReport,recordedDefense,recordedDefenseLabel,experimentDefenseLabel} from '../public/attack-results.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm,'')
@@ -20,7 +20,7 @@ function setup({saved=null,fetcher=()=>{throw Error('Unexpected fetch');}}={}){
   elements['#attack-report-root']={innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null};
   elements['#db-export']=input();
   elements['#modal'].querySelectorAll=()=>[];
-  const context=vm.createContext({seeds,categoryTools,mountAttackReport,structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,
+  const context=vm.createContext({seeds,categoryTools,mountAttackReport,recordedDefense,recordedDefenseLabel,experimentDefenseLabel,structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,
     FormData:class{constructor(f){this.values=f.values;}[Symbol.iterator](){return Object.entries(this.values)[Symbol.iterator]();}},
     fetch:fetcher,localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem:(key,value)=>writes.push(JSON.parse(value))},
     document:{querySelector:s=>elements[s]||null,querySelectorAll:()=>[],addEventListener(){}},
@@ -113,3 +113,13 @@ test('stored attack detail opens shared report with manual review; normal detail
   detail.experiment.purpose='normal';detail.runs[0].expected_label='normal';
   await a.showDatabaseExperiment('experiment-1');assert.deepEqual(toasts,[]);assert.equal(e['#modal'].className,'');assert.match(e['#modal'].innerHTML,/정상 이메일에 답변을 거부/);
 });
+
+ test('detail toolbar follows each stored defense and normal preblocks display zero tokens',async()=>{
+ for(const mode of ['off','filter','separate','both']){
+ const blocked=mode==='filter'||mode==='both';const detail={experiment:{id:'e',name:'검증',purpose:'normal',status:'completed',execution_plan:{defense:mode}},runs:[{id:'r',status:blocked?'blocked':'succeeded',expected_label:'normal',requested_model:'test',repeat_index:1,security_gateway_enabled:mode!=='off',input_snapshot:{defenseMode:mode},calls:[],evaluations:[],final_output:blocked?'차단':'요약'}]};
+ const a=setup({fetcher:async()=>({ok:true,status:200,json:async()=>detail})});a.api.state.dbReady=true;await a.api.showDatabaseExperiment('e');assert.deepEqual(a.toasts,[]);
+ const html=a.elements['#modal'].innerHTML;assert.match(html,new RegExp(recordedDefenseLabel(mode).replace(/[()]/g,'\\$&')));
+ if(blocked){assert.match(html,/모델 미호출/);assert.match(html,/0 \/ 0/);assert.match(html,/value="security_gateway"/);}
+ else if(mode==='off')assert.doesNotMatch(html,/value="security_gateway"/);
+ }
+ });

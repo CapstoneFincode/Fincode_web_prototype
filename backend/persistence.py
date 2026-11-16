@@ -141,11 +141,11 @@ class Persistence:
 
         @app.get('/api/experiments')
         async def experiments(page:int|None=None,pageSize:int|None=None,purpose:str|None=None,
-                              vector:str='all',model:str|None=None,provider:str|None=None):
-            if page is None and pageSize is None and purpose is None and vector=='all' and model is None and provider is None:
+                              vector:str='all',model:str|None=None,provider:str|None=None,experimentGroup:str='all'):
+            if page is None and pageSize is None and purpose is None and vector=='all' and model is None and provider is None and experimentGroup=='all':
                 return {'experiments':await self.call('experiments')}
             return await self.call('experiment_page',1 if page is None else page,
-                                   5 if pageSize is None else pageSize,purpose,vector,model,provider)
+                                   5 if pageSize is None else pageSize,purpose,vector,model,provider,experimentGroup)
 
         @app.get('/api/results/models')
         async def model_results(purpose:str='attack',vector:str='all',defense:str='off'):

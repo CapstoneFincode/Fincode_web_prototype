@@ -24,7 +24,7 @@ def filters(purpose=None, vector='all', model=None):
     return purpose, vector, model
 
 
-def experiment_page(db, page=1, page_size=5, purpose=None, vector='all', model=None, provider=None):
+def experiment_page(db, page=1, page_size=5, purpose=None, vector='all', model=None, provider=None, experiment_group='all'):
     purpose, vector, model = filters(purpose, vector, model)
     if provider is not None:
         provider = text(provider, '제공자', 100)
@@ -38,6 +38,11 @@ def experiment_page(db, page=1, page_size=5, purpose=None, vector='all', model=N
                 AND (%s::text IS NULL OR c.provider=%s)
                 AND (%s='all' OR (c.expected_label='attack'
                     AND coalesce(c.input_snapshot#>>'{attackScenario,vector}',s.vector)=%s))))'''
+    if experiment_group not in ('all','attack','defense'):
+        raise DataError('공격·방어 실험 구분을 확인해 주세요.')
+    if experiment_group != 'all':
+        defended="EXISTS (SELECT 1 FROM experiment_cases gc JOIN runs gr ON gr.experiment_case_id=gc.id WHERE gc.experiment_id=e.id AND gr.security_gateway_enabled)"
+        where += " AND e.purpose='attack' AND " + (defended if experiment_group=='defense' else 'NOT '+defended)
     params = (purpose, purpose, model, provider, vector, model, model, provider, provider, vector, vector)
     with db.connect() as conn:
         conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
@@ -47,7 +52,7 @@ def experiment_page(db, page=1, page_size=5, purpose=None, vector='all', model=N
         rows = conn.execute('''WITH selected AS (
             SELECT e.id,e.name,e.purpose,e.status,e.created_at FROM experiments e WHERE '''+where+'''
             ORDER BY e.created_at DESC,e.id DESC LIMIT %s OFFSET %s)
-            SELECT e.*,count(r.id)::int AS total,
+            SELECT e.*,bool_or(r.security_gateway_enabled) AS defense_enabled,count(r.id)::int AS total,
                 count(r.id) FILTER (WHERE r.status NOT IN ('queued','running'))::int AS finished,
                 coalesce(array_agg(DISTINCT c.requested_model ORDER BY c.requested_model)
                     FILTER (WHERE c.requested_model IS NOT NULL),ARRAY[]::text[]) AS models

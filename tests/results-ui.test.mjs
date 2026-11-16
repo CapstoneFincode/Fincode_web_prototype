@@ -217,3 +217,11 @@ test('selected defense is sent to model metrics without mixing OFF records',asyn
   a.state.resultReport.defense='both';await a.refreshResultMetrics();
   assert.equal(a.requests[0].url,'/api/results/models?purpose=attack&vector=all&defense=both');assert.equal(a.state.resultReport.data.defense,'both');
 });
+
+ test('attack and defense history groups use server pagination and distinguish stored ON records',async()=>{
+ const a=app(()=>response(history(1,{experiments:[job('on',{defense_enabled:true})]})));
+ await a.actions['history-group']({dataset:{group:'defense'}});
+ assert.match(a.requests.at(-1).url,/experimentGroup=defense/);assert.match(a.databaseJobRows(),/방어 실험/);
+ await a.actions['history-group']({dataset:{group:'attack'}});assert.match(a.requests.at(-1).url,/experimentGroup=attack/);
+ await a.actions['history-group']({dataset:{group:'all'}});assert.doesNotMatch(a.requests.at(-1).url,/experimentGroup/);
+ });

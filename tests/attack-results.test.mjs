@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {attackOutcome,attackCounts,buildAttackReport,filterAttackRuns,requestMessages,scenarioInfo,renderAttackReport,renderAttackRun,mountAttackReport} from '../public/attack-results.js';
+import {recordedDefense,recordedDefenseLabel,experimentDefenseLabel,attackOutcome,attackCounts,buildAttackReport,filterAttackRuns,requestMessages,scenarioInfo,renderAttackReport,renderAttackRun,mountAttackReport} from '../public/attack-results.js';
 
 const verdict=(value,judge_type='rule')=>({metric:'attack_success',boolean_value:value,decision_status:value===null?'indeterminate':'determinate',judge_type,evidence:'검증 근거'});
 const run=(id,categoryId='leak',value=true,extra={})=>({id,expected_label:'attack',status:'succeeded',evaluations:[verdict(value)],input_snapshot:{attackCategoryId:categoryId,attackScenario:{key:'scenario-'+categoryId,name:'시나리오 '+categoryId,categoryId,categoryName:'카테고리 '+categoryId,vector:'direct'},messages:[{role:'user',content:'예정 프롬프트'}]},...extra});
@@ -106,3 +106,19 @@ test('preblocked attack inputs are explicitly marked as never sent',()=>{
  const r=run('blocked','override',false,{status:'blocked',input_snapshot:{messages:[],defensePlan:{originalMessages:[{role:'user',content:'차단 원문'}]}}});
  assert.equal(requestMessages(r).source,'blocked');assert.match(renderAttackRun(r,0),/모델에 전송하지 않은 원문/);
 });
+
+ test('stored defense labels cover all modes and legacy records without assuming OFF',()=>{
+ for(const mode of ['off','filter','separate','both']){
+ const r={security_gateway_enabled:mode!=='off',input_snapshot:{defenseMode:mode}};
+ assert.equal(recordedDefense(r),mode);assert.equal(experimentDefenseLabel({experiment:{},runs:[r]}),recordedDefenseLabel(mode));
+ }
+ assert.equal(recordedDefense({security_gateway_enabled:false}),'off');
+ assert.equal(recordedDefense({security_gateway_enabled:true}),'unknown');
+ assert.equal(recordedDefense({security_gateway_enabled:true},'off'),'unknown');
+ assert.equal(recordedDefense({security_gateway_enabled:false,input_snapshot:{defenseMode:'both'}}),'unknown');
+ assert.equal(experimentDefenseLabel({runs:[{security_gateway_enabled:false},{security_gateway_enabled:true,input_snapshot:{defenseMode:'filter'}}]}),'방어 조건 혼합');
+ });
+ test('blocked image cards do not claim a provider response or transmitted OCR input',()=>{
+ const r=run('blocked','leak',false,{status:'blocked',security_gateway_enabled:true,input_snapshot:{defenseMode:'filter',inputMode:'attachment-v1',attackScenario:{payload:'검사 원문'},attachments:[{id:'12345678-1234-1234-1234-123456789012',mediaType:'image/png',filename:'test.png'}],defensePlan:{originalMessages:[{role:'user',content:'검사 원문'}]}},service_total_tokens:null});
+ const html=renderAttackRun(r,0);assert.match(html,/입력 필터 사전 차단 · 모델 미호출/);assert.match(html,/모델에 전송하지 않은 본문/);assert.match(html,/OCR 추출 텍스트 · 사전 차단 원문/);assert.doesNotMatch(html,/함께 전송한 본문|OCR 추출 텍스트 · 실제 전송 프롬프트/);
+ });
