@@ -1,5 +1,6 @@
 import { historicalRuns, attackSeeds, normalSeeds, historicalTypes } from './data.js';
-import { mountAttackReport, recordedDefense, recordedDefenseLabel, experimentDefenseLabel } from './attack-results.js';
+import * as defenseHistory from './defense-history.js';
+import { renderAttackRun, mountAttackReport, recordedDefense, recordedDefenseLabel, experimentDefenseLabel } from './attack-results.js';
 import { renderDashboard } from './dashboard.js';
 import { createDashboardController } from './dashboard-controller.js';
 import { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, categoryScopes, categoryScope, categoryLayout, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan } from './categories.js';
@@ -495,6 +496,7 @@ function changeResultPurpose(purpose){if(!Object.hasOwn(resultPurposeLabels,purp
 async function showModelHistory(model,provider){
   if(!(state.resultReport.data?.models||[]).some(row=>row.model===model))return;
   state.jobGroup=state.resultReport.purpose==='attack'?(state.resultReport.defense==='off'?'attack':'defense'):'all';
+  if(state.jobGroup==='defense'){defenseView.filters={...defenseHistory.defaults(),mode:state.resultReport.defense};defenseView.loaded=false;}
   state.jobFilter={model,purpose:state.resultReport.purpose,vector:state.resultReport.purpose==='attack'?state.resultReport.vector:'all'};
   if(provider)state.jobFilter.provider=provider;state.jobs=[];
   await refreshJobs({page:1});$('#web-experiment-history')?.scrollIntoView({behavior:'smooth',block:'start'});
@@ -555,13 +557,67 @@ async function submitDatabaseExperiment(){
   finally{state.jobSubmitting=false;if(button)button.disabled=state.connection!=='ready';}
 }
 
+let historyRenderOnly=false;
+function renderHistoryShell(){historyRenderOnly=true;try{shell();}finally{historyRenderOnly=false;}}
+const defenseView={rows:[],loaded:false,progress:'',filters:{query:'',vector:'all',mode:'all',outcome:'all',sort:'registered'}};
+const defenseOutcomeNames={success:'공격 성공',failure:'공격 실패',unknown:'미확정',unjudged:'미판정',error:'실행 오류',pending:'대기·실행 중',cancelled:'취소'};
+function defenseHistoryControls(){
+  const f=defenseView.filters;
+  const select=(key,label,options)=>`<label class="defense-history-select"><span class="screen-reader">${label}</span><select data-defense-filter="${key}" aria-label="${label}">${options.map(([value,name])=>`<option value="${value}" ${f[key]===value?'selected':''}>${name}</option>`).join('')}</select>${icon('chevron')}</label>`;
+  return `<div class="defense-history-controls"><label class="defense-history-search">${icon('search')}<span class="screen-reader">시나리오명, 공격 본문 검색</span><input data-defense-filter="query" type="search" maxlength="500" value="${esc(f.query)}" placeholder="시나리오명, 공격 본문 검색"></label>${select('vector','공격 경로 필터',[['all','전체 경로'],['direct','직접'],['indirect','간접']])}${select('mode','방어 기법 필터',[['all','전체 방어 기법'],['filter','입력 필터링'],['separate','명령·데이터 분리'],['both','두 기법 조합'],['unknown','기법 기록 확인 필요']])}${select('outcome','판정 필터',[['all','전체 판정'],...Object.entries(defenseOutcomeNames)])}${select('sort','실행 기록 정렬',[['registered','등록 순'],['newest','최신 실험 순'],['oldest','오래된 실험 순']])}<button class="btn text" data-action="defense-history-reset">초기화</button></div>`;
+}
+function bindDefenseHistoryControls(){
+  $$('[data-defense-filter]').forEach(el=>el.addEventListener(el.dataset.defenseFilter==='query'?'input':'change',()=>{
+    defenseView.filters[el.dataset.defenseFilter]=el.value;state.jobPage=1;
+    if(defenseView.loaded)applyDefenseHistoryPage(1);
+    renderJobs();
+  }));
+}
+function applyDefenseHistoryPage(page){
+  const f={...defenseView.filters};
+  const rows=state.jobFilter?defenseView.rows.filter(r=>(!state.jobFilter.model||r.model===state.jobFilter.model)&&(!state.jobFilter.vector||state.jobFilter.vector==='all'||r.vector===state.jobFilter.vector)&&(!state.jobFilter.provider||r.run.calls?.some(c=>c.provider===state.jobFilter.provider)||r.experiment.environment_snapshot?.provider===state.jobFilter.provider||state.jobFilter.provider==='baze')):defenseView.rows;
+  const result=defenseHistory.select(rows,f,page);
+  Object.assign(state,{jobPage:result.page,jobPages:result.totalPages,jobTotal:result.total});return result;
+}
+function defenseHistoryRows(){
+  if(state.jobLoading)return `<div class="results-history-message" role="status">시나리오별 실행 기록을 불러오는 중이에요. ${esc(defenseView.progress)}</div>`;
+  if(state.jobError)return `<div class="results-history-message error" role="alert">${esc(state.jobError)} <button class="btn text" data-action="db-refresh">다시 불러오기</button></div>`;
+  if(!defenseView.loaded)return '<div class="results-history-message" role="status">방어 실험을 선택하면 시나리오별 실행 기록을 조회해요.</div>';
+  const result=applyDefenseHistoryPage(state.jobPage),start=result.total?(result.page-1)*5+1:0,end=start?start+result.rows.length-1:0;
+  return `<div class="defense-history-summary"><strong>시나리오별 방어 실험</strong><span>검색·필터 적용 ${result.total}건 / 전체 ${defenseView.rows.length}건</span>${state.jobFilter?`<span>${esc(state.jobFilter.model||'모든 모델')} · ${esc(state.jobFilter.vector==='direct'?'직접':state.jobFilter.vector==='indirect'?'간접':'전체 경로')}</span><button class="btn text" data-action="defense-history-clear-model">모델·경로 조건 해제</button>`:''}</div><div class="table-wrap"><table class="results-history-table defense-history-table"><thead><tr><th scope="col">시나리오명 / 모델</th><th scope="col">공격 경로</th><th scope="col">방어 기법</th><th scope="col">공격 판정</th><th scope="col">실행일</th><th scope="col">상세</th></tr></thead><tbody>${result.rows.map(r=>`<tr><td><strong>${esc(r.name)}</strong><small>${esc(r.model||'모델 기록 없음')} · 반복 ${esc(r.repeat)} · ${esc(r.scenarioKey||'시나리오 ID 기록 없음')}</small></td><td>${tag(r.vector==='direct'?'직접':r.vector==='indirect'?'간접':'경로 기록 없음',r.vector==='direct'?'blue':'')}</td><td>${tag(recordedDefenseLabel(r.mode),'blue')}</td><td>${tag(defenseOutcomeNames[r.outcome],r.outcome==='failure'?'green':r.outcome==='success'||r.outcome==='error'?'amber':'blue')}${r.run.status==='blocked'?'<small>입력 사전 차단 · 모델 미호출</small>':''}</td><td class="results-date">${esc(resultDate(r.createdAt))}</td><td><button class="btn text" data-action="defense-run-detail" data-id="${esc(r.id)}" aria-label="${esc(r.name)} · ${esc(recordedDefenseLabel(r.mode))} · 실행 ${esc(r.id)} 결과 보기">결과 보기 ${icon('chevron')}</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty-table">조건에 맞는 실행 기록이 없어요. 검색어와 필터를 확인해 주세요.</td></tr>'}</tbody></table></div><nav class="results-pagination" aria-label="실험 기록 페이지"><span>전체 ${result.total}건 중 ${start}–${end}건 · 페이지당 5건</span><div><button class="btn" data-action="db-page" data-page="${result.page-1}" ${result.page<=1?'disabled':''} aria-label="이전 실험 기록 페이지">이전</button><span aria-live="polite">${result.page} / ${result.totalPages}</span><button class="btn" data-action="db-page" data-page="${result.page+1}" ${result.page>=result.totalPages?'disabled':''} aria-label="다음 실험 기록 페이지">다음</button></div></nav><p class="defense-history-note">각 행은 개별 실행 기록이에요. 같은 시나리오도 방어 기법·실행 회차가 다르면 별도로 표시해요. 등록 순은 원본 시나리오 등록일 기준이며 해당 기록이 없으면 실행 등록일을 사용해요.</p>`;
+}
+async function refreshDefenseHistory({page=state.jobPage,silent=false,reload=false}={}){
+  if(!state.dbReady||!Number.isInteger(page)||page<1)return;
+  clearTimeout(jobPollTimer);const request=++state.jobRequest;
+  if(defenseView.loaded&&!reload){applyDefenseHistoryPage(page);renderJobs();return;}
+  state.jobPage=page;state.jobLoading=true;state.jobError='';defenseView.loaded=false;defenseView.progress='';if(!silent)renderJobs();
+  try{
+    const details=await defenseHistory.load(dbApi,{isCurrent:()=>request===state.jobRequest&&state.jobGroup==='defense',onProgress:(done,total)=>{defenseView.progress=`${done}/${total}개 실험 조회`;if(request===state.jobRequest)renderJobs();}});
+    if(request!==state.jobRequest)return;
+    defenseView.rows=defenseHistory.flatten(details,state.attacks);defenseView.loaded=true;state.jobs=[];
+    state.jobActive=defenseView.rows.filter(r=>['queued','running'].includes(r.run.status)).length;applyDefenseHistoryPage(state.jobPage);
+  }catch(error){if(request===state.jobRequest&&!(error instanceof defenseHistory.StaleHistory))state.jobError=error.message||'개별 실행 기록을 불러오지 못했어요.';}
+  finally{if(request===state.jobRequest){state.jobLoading=false;renderJobs();if(!state.jobError&&state.jobActive>0&&['experiments','results'].includes(state.route))jobPollTimer=setTimeout(()=>refreshDefenseHistory({silent:true,reload:true}),5000);}}
+}
+async function showDefenseRun(id,reload=false){
+  const row=defenseView.rows.find(r=>r.id===id);if(!row)return toast('실행 기록을 다시 불러와 주세요.');
+  try{
+    let run=row.run,experiment=row.experiment;
+    if(reload){const detail=await dbApi('/api/experiments/'+encodeURIComponent(row.experimentId));run=detail.runs?.find(r=>r.id===id);experiment=detail.experiment;if(!run||!experiment)throw Error('선택한 실행 기록을 찾을 수 없어요.');row.run=run;row.experiment=experiment;row.outcome=defenseHistory.flatten([{experiment,runs:[run]}],state.attacks)[0]?.outcome||'unjudged';renderJobs();}
+    if($('#modal').open)$('#modal').close();
+    modal(row.name,`<p class="small muted">${tag(recordedDefenseLabel(recordedDefense(run,experiment.execution_plan?.defense)),'blue')} ${tag(row.vector==='direct'?'직접':row.vector==='indirect'?'간접':'경로 기록 없음')} · 개별 실행 1건</p>${renderAttackRun(run,0,{categories:state.categories,openAll:true})}`,`<button class="btn" data-action="defense-run-refresh" data-id="${esc(id)}">상태 새로고침</button><button class="btn" id="defense-run-export">실행 JSON 내보내기</button>`,'attack-report-modal');
+    $('#defense-run-export').addEventListener('click',()=>download('fincode-run-'+id+'.json',JSON.stringify({experiment,runs:[run]},null,2)));
+  }catch(error){toast(error.message||'실행 기록을 확인하지 못했어요.');}
+}
+
 function databaseResultsPanel(){
   if(workflowPreview)return workflowHistoryPanel();
-  return `<section class="panel section-space results-history" id="web-experiment-history"><div class="panel-head"><div><h2>웹에서 진행한 실험</h2><p>공격 실험 · 방어 실험 · 정상 응답 확인 · 성능 평가</p></div><button class="btn" data-action="db-refresh" ${state.dbReady&&!state.jobLoading?'':'disabled'}>새로고침</button></div><div class="results-purpose-tabs" role="group" aria-label="공격·방어 실험 기록 구분">${[['all','전체 기록'],['attack','공격 실험 · 방어 OFF'],['defense','방어 실험 · 방어 ON']].map(([id,label])=>`<button data-action="history-group" data-group="${id}" class="${(state.jobGroup||'all')===id?'active':''}" aria-pressed="${(state.jobGroup||'all')===id}">${label}</button>`).join('')}</div><div id="db-job-list">${databaseJobRows()}</div></section>`;
+  return `<section class="panel section-space results-history" id="web-experiment-history"><div class="panel-head"><div><h2>웹에서 진행한 실험</h2><p>공격 실험 · 방어 실험 · 정상 응답 확인 · 성능 평가</p></div><button class="btn" data-action="db-refresh" ${state.dbReady&&!state.jobLoading?'':'disabled'}>새로고침</button></div><div class="results-purpose-tabs" role="group" aria-label="공격·방어 실험 기록 구분">${[['all','전체 기록'],['attack','공격 실험 · 방어 OFF'],['defense','방어 실험 · 방어 ON']].map(([id,label])=>`<button data-action="history-group" data-group="${id}" class="${(state.jobGroup||'all')===id?'active':''}" aria-pressed="${(state.jobGroup||'all')===id}">${label}</button>`).join('')}</div>${state.jobGroup==='defense'?defenseHistoryControls():''}<div id="db-job-list">${databaseJobRows()}</div></section>`;
 }
 const jobStatus=s=>({queued:'실행 대기',running:'실행 중',completed:'완료',partial:'일부 실패',failed:'실패',cancelled:'취소'}[s]||s);
 function databaseJobRows(){
   if(!state.dbReady)return `<div class="results-history-message" role="status">${esc(state.dbError||'서버 연결 후 실험 기록을 확인할 수 있어요.')}</div>`;
+  if(state.jobGroup==='defense')return defenseHistoryRows();
   const filter=state.jobFilter?`<div class="results-history-filter"><span>${esc(state.jobFilter.model)} · ${esc(resultPurposeLabels[state.jobFilter.purpose])}${state.jobFilter.vector!=='all'?' · '+esc(vectorName(state.jobFilter.vector)):''}</span><button class="btn text" data-action="db-clear-filter">전체 실험 보기</button></div>`:'';
   const message=state.jobError?`<div class="results-history-message error" role="alert">${esc(state.jobError)} <button class="btn text" data-action="db-refresh">다시 불러오기</button></div>`:state.jobLoading?'<div class="results-history-message" role="status">기록을 불러오는 중이에요…</div>':'';
   const rows=state.jobs.slice(0,5),start=rows.length?(state.jobPage-1)*5+1:0,end=rows.length?start+rows.length-1:0;
@@ -569,7 +625,8 @@ function databaseJobRows(){
 }
 let jobPollTimer=null;
 function renderJobs(){$$('[data-action="history-group"]').forEach(el=>{const active=el.dataset.group===(state.jobGroup||'all');el.classList.toggle('active',active);el.setAttribute('aria-pressed',String(active));});if($('#db-job-list'))$('#db-job-list').innerHTML=databaseJobRows();const button=$('#web-experiment-history [data-action="db-refresh"]');if(button)button.disabled=!state.dbReady||state.jobLoading;}
-async function refreshJobs({page=state.jobPage,silent=false}={}){
+async function refreshJobs({page=state.jobPage,silent=false,reload=false}={}){
+  if(state.jobGroup==='defense')return refreshDefenseHistory({page,silent,reload});
   if(!state.dbReady||!Number.isInteger(page)||page<1)return;
   clearTimeout(jobPollTimer);const request=++state.jobRequest,changed=page!==state.jobPage;
   state.jobPage=page;state.jobLoading=true;state.jobError='';if(changed)state.jobs=[];if(!silent)renderJobs();
@@ -676,6 +733,7 @@ async function showDatabaseExperiment(id){
 const pages={overview,email:emailPage,'single-evaluation':singleEvaluationPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,settings:settingsPage};
 function route(){stopPerformancePolling();clearTimeout(jobPollTimer);state.jobRequest++;state.jobLoading=false;const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
 function bindPage(){
+  bindDefenseHistoryControls();
   if(state.route==='overview')dashboardController().load();
   mountPerformance();
   if(state.route==='comparison'){
@@ -686,8 +744,8 @@ function bindPage(){
     $$('[data-single-evaluation-field]').forEach(el=>el.addEventListener('change',e=>updateSingleEvaluationDraft(el.dataset.singleEvaluationField,e.target.value)));
     $$('input[name="single-evaluation-defense"]').forEach(el=>el.addEventListener('change',e=>{if(e.target.checked)updateSingleEvaluationDraft('defense',e.target.value);}));
   }
-  if(state.dbReady&&['experiments','results'].includes(state.route))refreshJobs();
-  if(state.dbReady&&state.route==='results')refreshResultMetrics();
+  if(!historyRenderOnly&&state.dbReady&&['experiments','results'].includes(state.route))refreshJobs();
+  if(!historyRenderOnly&&state.dbReady&&state.route==='results')refreshResultMetrics();
   if(state.route==='experiments'&&(state.dbReady||workflowPreview))$$('#db-experiment-form input[name="defense"]').forEach(el=>el.addEventListener('change',e=>{state.dbDefense=e.target.value;}));
   if(state.route==='experiments')$('#db-model')?.addEventListener('change',e=>{if(workflowPreview)state.model=e.target.value;else state.liveModel=e.target.value;});
   if(state.route==='experiments'&&workflowPreview)$('#db-experiment-form')?.addEventListener('submit',e=>{e.preventDefault();previewSelectedExperiment();});
@@ -1143,9 +1201,13 @@ const actions={
  'db-run':submitDatabaseExperiment,
  'workflow-preview':previewSelectedExperiment,
  'workflow-detail':el=>showWorkflowReport(el.dataset.id),
- 'history-group':async el=>{if(!['all','attack','defense'].includes(el.dataset.group))return;state.jobGroup=el.dataset.group;state.jobFilter=null;state.jobs=[];shell();await refreshJobs({page:1});},
+ 'history-group':async el=>{if(!['all','attack','defense'].includes(el.dataset.group))return;state.jobGroup=el.dataset.group;if(state.jobGroup==='defense')defenseView.loaded=false;state.jobFilter=null;state.jobs=[];renderHistoryShell();await refreshJobs({page:1});},
  'db-detail':el=>state.jobs.find(j=>j.id===el.dataset.id)?.purpose==='performance'?openHistoryPerformance(el.dataset.id):showDatabaseExperiment(el.dataset.id),
- 'db-refresh':()=>refreshJobs(),
+ 'db-refresh':()=>refreshJobs({reload:true}),
+ 'defense-run-detail':el=>showDefenseRun(el.dataset.id),
+ 'defense-run-refresh':el=>showDefenseRun(el.dataset.id,true),
+ 'defense-history-reset':()=>{defenseView.filters=defenseHistory.defaults();state.jobFilter=null;if(defenseView.loaded)applyDefenseHistoryPage(1);renderHistoryShell();renderJobs();},
+ 'defense-history-clear-model':()=>{state.jobFilter=null;applyDefenseHistoryPage(1);renderJobs();},
  'db-page':el=>refreshJobs({page:Number(el.dataset.page)}),
  'db-clear-filter':clearJobFilter,
  'results-purpose':el=>changeResultPurpose(el.dataset.purpose),

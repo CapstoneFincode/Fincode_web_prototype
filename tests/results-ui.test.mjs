@@ -5,6 +5,8 @@ import {readFileSync} from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import * as seeds from '../public/data.js';
 import * as categoryTools from '../public/categories.js';
+import * as defenseHistory from '../public/defense-history.js';
+import {recordedDefenseLabel} from '../public/attack-results.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm,'')
@@ -24,14 +26,14 @@ const metrics=(purpose='attack',vector='all',rows=[model()])=>({purpose,vector,d
 function app(fetcher=()=>{throw Error('Unexpected request');}){
   const requests=[],timers=new Map(),downloads=[],toasts=[],performanceOpens=[],elements=new Map();let nextTimer=0;
   function element(selector){if(!elements.has(selector))elements.set(selector,{innerHTML:'',listeners:{},disabled:false,addEventListener(name,fn){this.listeners[name]=fn;},scrollIntoView(){this.scrolled=true;}});return elements.get(selector);}
-  const context=vm.createContext({categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,AbortController,
+  const context=vm.createContext({defenseHistory,recordedDefenseLabel,categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,AbortController,
     setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,delay});return id;},clearTimeout:id=>timers.delete(id),
     fetch:(url,options)=>{requests.push({url,options});return fetcher(url,options);},
     localStorage:{getItem:()=>null,setItem(){}},
     document:{addEventListener(){},querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[]},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#results'},downloads,toasts,performanceOpens});
   vm.runInContext(source+`\nshell=()=>{};renderRuntime=()=>{};toast=message=>toasts.push(message);download=(name,content,type)=>downloads.push({name,content,type});openPerformanceRun=async(mode,id)=>performanceOpens.push({mode,id});
-    globalThis.api={state,pages,actions,bindPage,databaseJobRows,refreshJobs,clearJobFilter,showModelHistory,refreshResultMetrics,changeResultPurpose,liveResultRows,liveResultsContent,resultBars,resultModelTable,resultModelOptions,resultCsvCell,exportCSV,openHistoryPerformance};`,context);
+    globalThis.api={defenseView,applyDefenseHistoryPage,state,pages,actions,bindPage,databaseJobRows,refreshJobs,clearJobFilter,showModelHistory,refreshResultMetrics,changeResultPurpose,liveResultRows,liveResultsContent,resultBars,resultModelTable,resultModelOptions,resultCsvCell,exportCSV,openHistoryPerformance};`,context);
   Object.assign(context.api.state,{dbChecked:true,dbConfigured:true,dbReady:true,route:'results'});
   return {...context.api,requests,timers,downloads,toasts,performanceOpens,element,location:context.location};
 }
@@ -218,10 +220,15 @@ test('selected defense is sent to model metrics without mixing OFF records',asyn
   assert.equal(a.requests[0].url,'/api/results/models?purpose=attack&vector=all&defense=both');assert.equal(a.state.resultReport.data.defense,'both');
 });
 
- test('attack and defense history groups use server pagination and distinguish stored ON records',async()=>{
- const a=app(()=>response(history(1,{experiments:[job('on',{defense_enabled:true})]})));
+test('defense history flattens existing GET details and keeps OFF pagination separate',async()=>{
+ const detail={experiment:{id:'on',purpose:'attack',execution_plan:{defense:'filter'},created_at:'2026-11-16'},runs:[{id:'r1',security_gateway_enabled:true,expected_label:'attack',status:'blocked',input_snapshot:{defenseMode:'filter',attackScenario:{key:'s',name:'저장된 시나리오명',vector:'direct'}},evaluations:[{metric:'attack_success',judge_type:'rule',decision_status:'determinate',boolean_value:false}]}]};
+ const a=app(url=>response(url==='/api/experiments/on'?detail:url.includes('pageSize=100')?{experiments:[job('on',{total:1,defense_enabled:true})],page:1,pageSize:100,total:1,totalPages:1}:history()));
  await a.actions['history-group']({dataset:{group:'defense'}});
- assert.match(a.requests.at(-1).url,/experimentGroup=defense/);assert.match(a.databaseJobRows(),/방어 실험/);
+ assert.equal(a.requests[0].url,'/api/experiments?page=1&pageSize=100&experimentGroup=defense');assert.equal(a.requests[1].url,'/api/experiments/on');
+ const html=a.databaseJobRows();assert.match(html,/저장된 시나리오명/);assert.match(html,/입력 필터링/);assert.match(html,/직접/);assert.match(html,/전체 1건/);assert.doesNotMatch(html,/실험 on|카테고리별/);
+ const before=a.requests.length;await a.refreshJobs({page:2});assert.equal(a.requests.length,before);assert.equal(a.state.jobPage,1);
+ a.defenseView.filters.query='존재하지 않는 검색어';a.applyDefenseHistoryPage(1);assert.match(a.databaseJobRows(),/전체 0건/);
  await a.actions['history-group']({dataset:{group:'attack'}});assert.match(a.requests.at(-1).url,/experimentGroup=attack/);
  await a.actions['history-group']({dataset:{group:'all'}});assert.doesNotMatch(a.requests.at(-1).url,/experimentGroup/);
- });
+ assert.ok(a.requests.every(r=>r.options.method==='GET'));
+});

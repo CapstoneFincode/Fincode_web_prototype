@@ -5,7 +5,8 @@ import {readFileSync} from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import * as seeds from '../public/data.js';
 import * as categoryTools from '../public/categories.js';
-import {mountAttackReport,recordedDefense,recordedDefenseLabel,experimentDefenseLabel} from '../public/attack-results.js';
+import * as defenseHistory from '../public/defense-history.js';
+import {renderAttackRun,mountAttackReport,recordedDefense,recordedDefenseLabel,experimentDefenseLabel} from '../public/attack-results.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm,'')
@@ -18,14 +19,14 @@ function setup({saved=null,fetcher=()=>{throw Error('Unexpected fetch');}}={}){
   const elements={'#modal':{open:false,showModal(){this.open=true;},close(){this.open=false;}},'#record-form':form,'#form-error':{},'#f-evaluationMode':input('system_prompt_leak'),'#expected-output-field':{},'#f-expectedOutput':{},'#evaluation-hint':{}};
   const writes=[],toasts=[];
   elements['#attack-report-root']={innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null};
-  elements['#db-export']=input();
+  elements['#db-export']=input();elements['#defense-run-export']=input();
   elements['#modal'].querySelectorAll=()=>[];
-  const context=vm.createContext({seeds,categoryTools,mountAttackReport,recordedDefense,recordedDefenseLabel,experimentDefenseLabel,structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,
+  const context=vm.createContext({defenseHistory,renderAttackRun,seeds,categoryTools,mountAttackReport,recordedDefense,recordedDefenseLabel,experimentDefenseLabel,structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,
     FormData:class{constructor(f){this.values=f.values;}[Symbol.iterator](){return Object.entries(this.values)[Symbol.iterator]();}},
     fetch:fetcher,localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem:(key,value)=>writes.push(JSON.parse(value))},
     document:{querySelector:s=>elements[s]||null,querySelectorAll:()=>[],addEventListener(){}},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#data'},toasts});
-  vm.runInContext(source+'\nshell=()=>{};toast=message=>toasts.push(message);globalThis.api={state,recordForm,bindEvaluationFields,evaluationFields,recordEvaluationMode,validateImport,persist,adoptDatabase,verdictStats,effectiveVerdict,evaluationResult,showDatabaseExperiment};',context);
+  vm.runInContext(source+'\nshell=()=>{};toast=message=>toasts.push(message);globalThis.api={state,recordForm,bindEvaluationFields,evaluationFields,recordEvaluationMode,validateImport,persist,adoptDatabase,verdictStats,effectiveVerdict,evaluationResult,showDatabaseExperiment,defenseView,showDefenseRun};',context);
   Object.assign(context.api.state,{tab:'attacks',dbChecked:true});
   return {api:context.api,elements,form,writes,toasts};
 }
@@ -123,3 +124,11 @@ test('stored attack detail opens shared report with manual review; normal detail
  else if(mode==='off')assert.doesNotMatch(html,/value="security_gateway"/);
  }
  });
+
+test('one selected defense run opens by scenario name without category or sibling records',async()=>{
+ const {api:a,elements:e,toasts,writes}=setup();
+ const run={id:'selected',security_gateway_enabled:true,status:'blocked',expected_label:'attack',requested_model:'m',repeat_index:1,evaluations:[{metric:'attack_success',judge_type:'rule',decision_status:'determinate',boolean_value:false}],input_snapshot:{defenseMode:'filter',attackScenario:{key:'s',name:'개별 시나리오',vector:'indirect'},defensePlan:{originalMessages:[{role:'user',content:'선택된 원문'}]}},final_output:'안전 차단',calls:[]};
+ a.defenseView.rows=defenseHistory.flatten([{experiment:{id:'parent',name:'기존 묶음 이름',purpose:'attack'},runs:[run,{...run,id:'other',input_snapshot:{...run.input_snapshot,attackScenario:{name:'다른 시나리오'}}}]}]);
+ await a.showDefenseRun('selected');const html=e['#modal'].innerHTML;
+ assert.deepEqual(toasts,[]);assert.deepEqual(writes,[]);assert.match(html,/<h2 id="dialog-title">개별 시나리오<\/h2>/);assert.match(html,/선택된 원문/);assert.match(html,/입력 필터링/);assert.match(html,/간접/);assert.match(html,/모델 미호출/);assert.doesNotMatch(html,/다른 시나리오|기존 묶음 이름|카테고리별 공격 결과/);assert.equal((html.match(/data-run-card=/g)||[]).length,1);
+});
