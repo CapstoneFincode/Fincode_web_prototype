@@ -31,7 +31,7 @@ function setup(fetcher=()=>{throw Error('Unexpected history or model request');}
 
 test('comparison deep links expand the three result children and retain the existing history route',()=>{
   const {api,context,element,mounted}=setup();
-  for(const [route,kind,label] of [['normal-result-comparison','normal','정상 이메일 평가 성능 비교'],['attack-result-comparison','attack','공격 실험 결과 성능 비교']]){
+  for(const [route,kind,label] of [['normal-result-comparison','normal','단일 모델 성능 평가 간 비교'],['attack-result-comparison','attack','공격 실험 결과 성능 비교']]){
     context.location.hash='#'+route;api.route();
     assert.equal(api.state.route,route);assert.equal(api.state.resultsMenuOpen,true);
     const html=element('#app').innerHTML;

@@ -1,8 +1,7 @@
-"""Read-only, selected-record comparisons over frozen input cohorts.
+"""Read-only comparisons over selected, frozen experiment records.
 
-The cohort is independent of outcomes: pre-model blocks, failures and pending
-runs remain visible. No current dataset row or transformed request hash is used
-to pair an OFF run with an ON run.
+Normal evaluations share an input cohort. Attack cards are independent samples:
+every selected run remains visible, even when cards have different conditions.
 """
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -13,7 +12,13 @@ from backend.database import DataError, digest, text, uuid
 
 
 MODES = ('off', 'filter', 'separate', 'both')
+VECTORS = ('all', 'direct', 'indirect')
 MAX_RUNS = 10000
+VECTOR_SQL = """CASE
+    WHEN c.input_snapshot#>>'{attackScenario,vector}' IN ('direct','indirect')
+        THEN c.input_snapshot#>>'{attackScenario,vector}'
+    WHEN c.input_snapshot#>>'{attackScenario,vector}' IS NULL THEN coalesce(s.vector,'unknown')
+    ELSE 'unknown' END"""
 DEFENSE_SQL = """CASE
     WHEN c.input_snapshot->>'defenseMode' IS NOT NULL
         AND c.input_snapshot#>>'{defensePlan,defenseResult,mode}' IS NOT NULL
@@ -33,29 +38,33 @@ def validate(data):
     vector = data.get('vector', 'all')
     if kind not in ('normal', 'attack'):
         raise DataError('비교 종류는 normal 또는 attack이어야 합니다.')
-    if vector not in ('all', 'direct', 'indirect') or (kind == 'normal' and vector != 'all'):
+    if vector not in VECTORS or (kind == 'normal' and vector != 'all'):
         raise DataError('공격 경로는 공격 실험 비교에서 선택해 주세요.')
     selections = data.get('selections')
     if not isinstance(selections, list) or not 2 <= len(selections) <= (4 if kind == 'normal' else 5):
-        raise DataError('정상 평가는 2~4개 조건, 공격 실험은 2~5개 모델의 기록을 선택해 주세요.')
+        raise DataError('정상 평가는 2~4개 조건, 공격 실험은 2~5개 비교 카드의 기록을 선택해 주세요.')
     chosen = []
     for selection in selections:
-        if not isinstance(selection, dict) or set(selection) != {'experimentId', 'model', 'defense'}:
+        fields = {'experimentId', 'model', 'defense'}
+        if not isinstance(selection, dict) or not fields <= set(selection) or set(selection) - fields - ({'vector'} if kind == 'attack' else set()):
             raise DataError('각 기록의 실험 ID, 모델, 방어 모드를 지정해 주세요.')
         model = text(selection['model'], '모델', 200)
         if model != model.strip() or selection['defense'] not in MODES:
             raise DataError('저장된 모델과 방어 모드를 확인해 주세요.')
         chosen.append({'experimentId': uuid(selection['experimentId']), 'model': model,
                        'defense': selection['defense']})
-    if len({tuple(s.values()) for s in chosen}) != len(chosen):
-        raise DataError('같은 실험 기록을 중복 선택할 수 없습니다.')
+        if kind == 'attack':
+            selected_vector = selection.get('vector', vector)
+            if selected_vector not in VECTORS:
+                raise DataError('각 카드의 공격 경로는 all, direct, indirect 중에서 선택해 주세요.')
+            chosen[-1]['vector'] = selected_vector
     modes = [s['defense'] for s in chosen]
     models = [s['model'] for s in chosen]
     if kind == 'normal':
+        if len({tuple(s.values()) for s in chosen}) != len(chosen):
+            raise DataError('같은 실험 기록을 중복 선택할 수 없습니다.')
         if len(set(models)) != 1 or modes.count('off') != 1 or len(set(modes)) != len(modes):
             raise DataError('같은 모델의 방어 OFF 기록 1개와 서로 다른 방어 ON 조건을 선택해 주세요.')
-    elif len(set(models)) != len(models) or len(set(modes)) != 1 or modes[0] == 'off':
-        raise DataError('서로 다른 2~5개 모델과 동일한 방어 ON 조건을 선택해 주세요.')
     return kind, chosen, vector
 
 
@@ -65,10 +74,12 @@ def records(db, kind='normal', page=1, page_size=50):
     if type(page) is not int or page < 1 or type(page_size) is not int or not 1 <= page_size <= 100:
         raise DataError('페이지는 1 이상, 표시 개수는 1~100으로 지정해 주세요.')
     purpose = 'performance' if kind == 'normal' else 'attack'
+    vector_counts = ','.join('count(*) FILTER (WHERE (' + VECTOR_SQL + ")='" + value + "')::int AS vector_" + value
+                             for value in ('direct', 'indirect', 'unknown')) if kind == 'attack' else ''
     grouped = '''SELECT e.id,e.name,e.created_at,e.status,c.requested_model AS model,
-        ''' + DEFENSE_SQL + ''' AS defense,count(*)::int AS run_count
+        ''' + DEFENSE_SQL + ''' AS defense,count(*)::int AS run_count''' + (',' + vector_counts if vector_counts else '') + '''
         FROM experiments e JOIN experiment_cases c ON c.experiment_id=e.id
-        JOIN runs r ON r.experiment_case_id=c.id WHERE e.purpose=%s
+        JOIN runs r ON r.experiment_case_id=c.id''' + (' LEFT JOIN attack_scenarios s ON s.id=c.attack_scenario_id' if kind == 'attack' else '') + ''' WHERE e.purpose=%s
         GROUP BY e.id,c.requested_model,defense'''
     with db.connect() as conn:
         conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
@@ -77,9 +88,15 @@ def records(db, kind='normal', page=1, page_size=50):
         page = min(page, pages)
         rows = conn.execute(grouped + ' ORDER BY e.created_at DESC,e.id DESC,model,defense LIMIT %s OFFSET %s',
                             (purpose, page_size, (page - 1) * page_size)).fetchall()
-    return {'records': [{'experimentId': str(r['id']), 'name': r['name'], 'createdAt': r['created_at'],
-                         'status': r['status'], 'model': r['model'], 'defense': r['defense'],
-                         'runCount': r['run_count']} for r in rows],
+    output = []
+    for row in rows:
+        record = {'experimentId': str(row['id']), 'name': row['name'], 'createdAt': row['created_at'],
+                  'status': row['status'], 'model': row['model'], 'defense': row['defense'], 'runCount': row['run_count']}
+        if kind == 'attack':
+            record['vectorCounts'] = {value: row['vector_' + value] for value in ('direct', 'indirect', 'unknown')}
+            record['vectors'] = [value for value, count in record['vectorCounts'].items() if count]
+        output.append(record)
+    return {'records': output,
             'page': page, 'pageSize': page_size, 'total': total, 'totalPages': pages}
 
 
@@ -194,8 +211,113 @@ def metrics(rows, kind):
             'totalTokensMean': mean(v[2] for v in tokens) if tokens else None, 'tokensCount': len(tokens)}
 
 
+def _scenario(row):
+    snapshot = row.get('input_snapshot')
+    value = snapshot.get('attackScenario') if isinstance(snapshot, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _saved_text(value):
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def attack_vector(row):
+    """Only missing legacy snapshots may fall back to their immutable FK row."""
+    value = _scenario(row).get('vector')
+    if value is None:
+        value = row.get('legacy_vector')
+    return value if value in ('direct', 'indirect') else 'unknown'
+
+
+def attack_category(row):
+    snapshot = row.get('input_snapshot')
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    scenario = _scenario(row)
+    identifier = (_saved_text(scenario.get('categoryId')) or _saved_text(snapshot.get('attackCategoryId'))
+                  or _saved_text(row.get('legacy_category_id')))
+    # Never look up the current category name: it can change after this run.
+    name = _saved_text(scenario.get('categoryName'))
+    return identifier, name
+
+
+def scenario_count(rows):
+    identifiers = set()
+    for row in rows:
+        scenario = _scenario(row)
+        key = _saved_text(scenario.get('key')) or _saved_text(row.get('legacy_scenario_key'))
+        identifier = _saved_text(scenario.get('id')) or (str(row['legacy_scenario_id']) if row.get('legacy_scenario_id') else None)
+        if key or identifier:
+            identifiers.add(('key', key) if key else ('id', identifier))
+    return len(identifiers)
+
+
+def independent_attack(selections, rows, vector='all'):
+    """Summarize each card independently; never intersect input sets across cards."""
+    warnings = ['각 카드는 선택한 실험 기록과 공격 경로의 전체 실행을 독립 집계합니다. 입력·반복 수·방어·판정 설정이 다를 수 있으므로 동일 조건의 인과 비교로 해석하지 마세요.']
+    groups, category_names, category_rows = [], defaultdict(set), defaultdict(dict)
+    seen = {}
+    for index, selected in enumerate(selections):
+        selected_vector = selected.get('vector', vector)
+        chosen = {str(row['id']): row for row in rows if str(row['experiment_id']) == selected['experimentId']
+                  and row['requested_model'] == selected['model'] and row['defense'] == selected['defense']}
+        if not chosen:
+            raise DataError('선택한 종류·모델·방어 조건의 실험 기록을 찾을 수 없습니다.', 404, 'COMPARISON_RECORD_NOT_FOUND')
+        signature = (selected['experimentId'], selected['model'], selected['defense'], selected_vector)
+        if signature in seen:
+            warnings.append(f'카드 {seen[signature] + 1}과 카드 {index + 1}은 같은 조건과 기록을 선택했습니다. 동일 실행을 각 카드에 표시합니다.')
+        else:
+            seen[signature] = index
+        filtered = [row for row in chosen.values() if selected_vector == 'all' or attack_vector(row) == selected_vector]
+        name = next(iter(chosen.values()))['name']
+        groups.append({**selected, 'index': index, 'name': name, 'vector': selected_vector,
+                       'sourceRuns': len(chosen), 'selectedRuns': len(filtered), 'excludedRuns': len(chosen) - len(filtered),
+                       'matchedRuns': None, 'scenarioCount': scenario_count(filtered), 'metrics': metrics(filtered, 'attack')})
+        if not filtered:
+            warnings.append(f'카드 {index + 1}: 선택한 공격 경로에 해당하는 실행 기록이 없습니다.')
+        unknown = sum(attack_vector(row) == 'unknown' for row in chosen.values())
+        if unknown:
+            warnings.append(f'카드 {index + 1}: 공격 경로 정보가 없는 {unknown}건은 전체 경로에서만 포함합니다.')
+        missing_identity = sum(not (_saved_text(_scenario(row).get('key')) or _saved_text(_scenario(row).get('id'))
+                                   or row.get('legacy_scenario_key') or row.get('legacy_scenario_id')) for row in filtered)
+        if missing_identity:
+            warnings.append(f'카드 {index + 1}: 시나리오 식별 정보가 없는 {missing_identity}건은 실행 지표에 포함하되 시나리오 수에서는 제외합니다.')
+        grouped = defaultdict(list)
+        for row in filtered:
+            category, name = attack_category(row)
+            grouped[category].append(row)
+            if name:
+                category_names[category].add(name)
+        for category, members in grouped.items():
+            category_rows[category][index] = members
+    categories = []
+    for category, by_group in category_rows.items():
+        names = sorted(category_names[category])
+        name = (' / '.join(names) if names else category) if category is not None else '미분류'
+        if category is None and names:
+            warnings.append('카테고리 ID가 없는 저장 이름은 분류를 확정할 수 없어 미분류로 집계합니다 (' + ' / '.join(names) + ').')
+        elif len(names) > 1:
+            warnings.append(f'카테고리 {category or "미분류"}: 같은 ID에 저장된 이름이 여러 개여서 한 행에 함께 표시합니다 ({name}).')
+        categories.append({'id': category, 'name': name, 'groups': [
+            {'index': index, 'scenarioCount': scenario_count(by_group.get(index, [])),
+             'runCount': len(by_group.get(index, [])),
+             'metrics': metrics(by_group[index], 'attack') if index in by_group else None}
+            for index in range(len(groups))]})
+    categories.sort(key=lambda category: (category['id'] is None, category['name'], category['id'] or ''))
+    if any(group['metrics']['errors'] or group['metrics']['pending'] or group['metrics']['cancelled'] for group in groups):
+        warnings.append('오류·대기·취소 실행은 실행 수에 포함하지만 공격 성공률의 분모에서는 제외합니다.')
+    if any(group['metrics']['unjudged'] or group['metrics']['indeterminate'] for group in groups):
+        warnings.append('미판정·판정 보류는 공격 성공률의 분모에서 제외합니다. 확정 성공과 확정 실패가 모두 없으면 성공률을 표시하지 않습니다.')
+    warnings.append('전체 공격 성공률은 확정 성공 수 / (확정 성공 수 + 확정 실패 수)입니다. 카테고리별 성공률을 단순 평균하지 않습니다.')
+    warnings.append('토큰은 각 모델/API가 보고한 사용량이며 모델 간 동일한 길이 단위가 아닙니다. 호출 지연·토큰 평균에는 모델 호출 전 차단을 포함하지 않습니다.')
+    return {'kind': 'attack', 'analysisMode': 'independent', 'generatedAt': datetime.now(timezone.utc),
+            'comparable': any(group['selectedRuns'] for group in groups), 'commonCases': None, 'commonRuns': None,
+            'warnings': warnings, 'groups': groups, 'categories': categories}
+
+
 def compare_rows(kind, selections, rows, vector='all'):
     """Pure comparison; DB adapter supplies latest effective judgments and usage."""
+    if kind == 'attack':
+        return independent_attack(selections, rows, vector)
     warnings = []
     groups = []
     maps = []
@@ -256,11 +378,13 @@ def compare(db, data):
     query = '''SELECT r.id,r.status,r.defense_profile_id,r.call_log_complete,
         c.experiment_id,c.requested_model,c.expected_label,c.repeat_index,c.provider,
         c.prompt_version,c.system_prompt,c.inference_settings,c.input_snapshot,e.name,e.evaluation_policy,
+        s.id AS legacy_scenario_id,s.scenario_key AS legacy_scenario_key,s.vector AS legacy_vector,s.category_id AS legacy_category_id,
         ''' + DEFENSE_SQL + ''' AS defense,p.code_ref AS defense_code_ref,p.ordered_steps AS defense_steps,
         v.decision_status,v.boolean_value,v.score,v.details,
         calls.call_count,calls.latency_ms,calls.input_tokens,calls.output_tokens,calls.total_tokens
         FROM experiments e JOIN experiment_cases c ON c.experiment_id=e.id
         JOIN runs r ON r.experiment_case_id=c.id LEFT JOIN defense_profiles p ON p.id=r.defense_profile_id
+        LEFT JOIN attack_scenarios s ON s.id=c.attack_scenario_id
         LEFT JOIN LATERAL (
             SELECT decision_status,boolean_value,score,details FROM evaluations
             WHERE run_id=r.id AND metric=%s

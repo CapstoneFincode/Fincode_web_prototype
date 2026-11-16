@@ -94,7 +94,7 @@ function exportCSV(){
 const navs=[['overview','grid','대시보드'],['email','mail','이메일 요약기'],['evaluation','layers','성능 평가'],['experiments','flask','공격 실험'],['data','database','데이터 관리'],['results','chart','실험 결과']];
 const evaluationRoutes=['single-evaluation','comparison'];
 const resultsRoutes=['results','normal-result-comparison','attack-result-comparison'];
-const routeTitles={overview:'대시보드',email:'이메일 요약기','single-evaluation':'단일 모델 성능 평가',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 기록','normal-result-comparison':'정상 이메일 평가 성능 비교','attack-result-comparison':'공격 실험 결과 성능 비교',settings:'연동 및 개발 현황'};
+const routeTitles={overview:'대시보드',email:'이메일 요약기','single-evaluation':'단일 모델 성능 평가',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 기록','normal-result-comparison':'단일 모델 성능 평가 간 비교','attack-result-comparison':'공격 실험 결과 성능 비교',settings:'연동 및 개발 현황'};
 function evaluationNavigation(){
   const active=evaluationRoutes.includes(state.route),open=state.evaluationMenuOpen;
   return `<div class="evaluation-nav"><button type="button" id="evaluation-menu-toggle" class="nav-parent ${active?'active':''}" data-action="toggle-evaluation-menu" aria-expanded="${open}" aria-controls="evaluation-subnav">${icon('layers')}<span>성능 평가</span>${icon('chevron','nav-chevron')}</button><div id="evaluation-subnav" class="evaluation-subnav" ${open?'':'hidden'}>${[['single-evaluation','단일 모델 성능 평가'],['comparison','모델 별 비교']].map(([id,label])=>`<a href="#${id}" class="${state.route===id?'active':''}" ${state.route===id?'aria-current="page"':''}><span class="subnav-dot" aria-hidden="true"></span>${label}</a>`).join('')}</div></div>`;
