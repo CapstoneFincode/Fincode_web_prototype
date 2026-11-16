@@ -18,6 +18,7 @@ import secrets
 from uuid import UUID
 
 from backend.persistence import Persistence
+from backend.credits import CreditBalance
 from backend.defenses import DefenseGateway, DefenseSettings
 from backend.deployment import is_hosted, validate_hosted
 from urllib.parse import urlsplit
@@ -254,6 +255,12 @@ def create_app(*, api_key: str | None = None, upstream_transport: httpx.AsyncBas
             raise APIError(502, "GATEWAY_UNAVAILABLE", "BAZE 응답 형식을 확인할 수 없습니다.", latencyMs=elapsed, upstreamStatus=response.status_code)
         data["_upstreamStatus"] = response.status_code
         return data, latency()
+
+    credit_balance = CreditBalance(gateway, configured_key, APIError)
+
+    @app.get("/api/credits")
+    async def credits() -> dict[str, Any]:
+        return await credit_balance.get()
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:

@@ -455,6 +455,10 @@ class Database:
             credential_alias='server-key-1',status='sent',request_snapshot={'model':model,'messages':snapshot['messages'],'max_tokens':config['maxTokens'],'stream':False},
             started_at=datetime.now(timezone.utc)))
 
+    def dashboard(self):
+        from backend.dashboard import overview
+        return overview(self)
+
     def performance_dataset(self):
         from backend.performance import dataset
         return dataset(self)

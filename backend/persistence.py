@@ -85,6 +85,10 @@ class Persistence:
         async def datasets():
             return await self.call('datasets')
 
+        @app.get('/api/dashboard')
+        async def dashboard():
+            return await self.call('dashboard')
+
         @app.post('/api/data/normal/review')
         async def review_normal_batch(request:Request):
             return await self.call('review_normal_batch',await read_payload(request))
