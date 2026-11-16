@@ -89,11 +89,11 @@ export function renderDashboard({data = null, loading = false, error = '', credi
   return `<div class="live-dashboard">
     <div class="page-head dash-page-head"><div><div class="eyebrow">RESEARCH WORKSPACE</div><h1>실험의 시작부터, 결과까지.</h1><p>데이터를 준비하고, 공격·방어 효과와 모델의 요약 성능을 확인하세요.</p></div><button type="button" class="btn" data-action="dashboard-refresh" ${busy ? 'disabled' : ''}>${icon('refresh')}${busy ? '확인 중…' : '현황 새로고침'}</button></div>
     <div class="dash-intro-grid"><section class="dash-welcome"><span class="dash-kicker">FINCODE SECURITY LAB</span><h2>어떤 실험을<br>시작해 볼까요?</h2><p>이메일 요약부터 프롬프트 인젝션 공격 실험,<br class="dash-desktop-break">정상 데이터 기반 성능 평가까지 한곳에서 진행해요.</p><div class="dash-welcome-actions"><a href="#experiments" class="btn primary">${icon('flask')}공격 실험 시작</a><a href="#comparison" class="btn">모델 비교하기${icon('arrow')}</a></div><div class="dash-welcome-note"><span class="dash-live-dot" aria-hidden="true"></span>아래 현황은 현재 DB에 저장된 기록을 기준으로 표시해요.</div></section>${creditPanel(credits,creditsLoading,creditsError)}</div>
+    ${features()}
     <section class="dash-data" aria-label="현재 데이터와 실험 현황" aria-busy="${loading}"><div class="dash-data-heading"><h2>현재 연구 현황</h2><span role="status">${loading ? '데이터 확인 중…' : current ? `DB 조회 · ${escape(stamp(current.generatedAt))} (한국시간)` : 'DB 조회 전'}</span></div>
     ${error ? `<div class="dash-error" role="alert"><strong>현재 현황을 불러오지 못했어요.</strong><p>${escape(error)}</p></div>` : ''}
     <div class="dash-metrics">${metric('공격 시나리오',number(dataset?.attacks),'건',`직접 ${number(dataset?.direct)} · 간접 ${number(dataset?.indirect)}`,'flask')}${metric('검토 완료 평가 이메일',number(groundTruth?.ready),`/ ${number(groundTruth?.total)}건`,'정상 라벨·기준 정답 검토 완료','data','mint')}${metric('저장된 실험',number(experiments?.total),'건',`현재 대기·실행 중 ${number(experiments?.active)}건`,'chart')}${metric('평가에 등록된 모델',number(current?.performance?.modelCount),'종','성능 평가 기록 기준 · 대기 포함','models','violet')}</div>
     <div class="dash-dataset-note"><span>전체 정상 이메일 <b>${number(dataset?.normal)}건</b></span><span>공격 카테고리 <b>${number(dataset?.categories)}개</b></span><a href="#data">데이터 관리${icon('arrow')}</a></div>${groundTruth?.error ? `<p class="dash-groundtruth-error" role="status">평가 데이터 확인 필요 · ${escape(groundTruth.error)}</p>` : ''}</section>
-    ${features()}
     <div class="dash-records-grid">${recentExperiments(current,loading,error)}${recentPerformance(current,loading,error)}</div>
   </div>`;
 }
