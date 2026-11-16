@@ -181,3 +181,13 @@
 .defense-history-summary{display:flex;flex-wrap:wrap;gap:16px;align-items:center;padding:18px 24px}.defense-history-summary>span{font-size:13px;color:#7e8dab}
 .defense-history-note{padding:0 24px 18px;margin:0;color:#7e8dab;font-size:12px;line-height:1.7}.defense-history-table td:first-child{min-width:240px}.defense-history-table td small{overflow-wrap:anywhere}
 @media(max-width:700px){.defense-history-controls{padding:14px;gap:8px}.defense-history-search{flex-basis:100%}.defense-history-select{flex:1 1 135px}.defense-history-controls>.btn{margin-left:auto}.defense-history-summary{padding:14px}}
+
+/* Data management: page controls share the table's compact visual rhythm. */
+#data-table{scroll-margin-top:24px}
+.data-pagination{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 23px;border-top:1px solid var(--line);background:#fcfdff;color:#718098;font-size:11px}
+.data-pagination>div{display:flex;align-items:center;gap:16px}
+.data-pagination .btn{padding:8px 14px;font-size:11px}
+.data-pagination .mono{min-width:46px;text-align:center;color:#42516a;font-variant-numeric:tabular-nums}
+.data-pagination button:disabled{opacity:.4;cursor:not-allowed;transform:none}
+#data-table .table-footer{gap:8px;flex-wrap:wrap}
+@media(max-width:600px){.data-pagination{padding:14px 16px;gap:12px}.data-pagination>div{width:100%;justify-content:space-between}#data-table .table-footer{padding:12px 16px}}
