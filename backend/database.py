@@ -459,6 +459,14 @@ class Database:
         from backend.dashboard import overview
         return overview(self)
 
+    def comparison_records(self, kind='normal', page=1, page_size=50):
+        from backend.result_comparison import records
+        return records(self, kind, page, page_size)
+
+    def compare_results(self, data):
+        from backend.result_comparison import compare
+        return compare(self, data)
+
     def performance_dataset(self):
         from backend.performance import dataset
         return dataset(self)

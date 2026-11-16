@@ -7,6 +7,7 @@ import * as seeds from '../public/data.js';
 import * as categoryTools from '../public/categories.js';
 import {renderDashboard} from '../public/dashboard.js';
 import {createDashboardController} from '../public/dashboard-controller.js';
+import {renderResultComparison} from '../public/result-comparison.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm, '')
@@ -15,7 +16,7 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/route\(\);\s*refreshConnection\(\);\s*$/, '');
 function app(saved=null,fetcher=()=>{throw new Error('Unexpected API request');}){
   const listeners={},storageWrites=[];
-  const context=vm.createContext({renderDashboard,createDashboardController,categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,fetch:fetcher,
+  const context=vm.createContext({renderDashboard,createDashboardController,renderResultComparison,categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,setTimeout,clearTimeout,AbortController,fetch:fetcher,
     localStorage:{getItem:()=>saved?JSON.stringify(saved):null,setItem:(key,value)=>storageWrites.push({key,value})},
     document:{addEventListener:(name,handler)=>listeners[name]=handler,querySelector:()=>null,querySelectorAll:()=>[]},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#overview'},listeners});

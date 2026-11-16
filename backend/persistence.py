@@ -155,6 +155,14 @@ class Persistence:
         async def model_results(purpose:str='attack',vector:str='all',defense:str='off'):
             return await self.call('model_results',purpose,vector,defense)
 
+        @app.get('/api/results/comparison-records')
+        async def comparison_records(kind:str='normal',page:int=1,pageSize:int=50):
+            return await self.call('comparison_records',kind,page,pageSize)
+
+        @app.post('/api/results/compare')
+        async def compare_results(request:Request):
+            return await self.call('compare_results',await read_payload(request))
+
         @app.post('/api/experiments',status_code=202)
         async def enqueue(request:Request):
             data=await read_payload(request)

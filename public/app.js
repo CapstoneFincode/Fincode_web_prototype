@@ -3,6 +3,7 @@ import * as defenseHistory from './defense-history.js';
 import { mountAttackReport, recordedDefense, recordedDefenseLabel, experimentDefenseLabel } from './attack-results.js';
 import { renderDashboard } from './dashboard.js';
 import { createDashboardController } from './dashboard-controller.js';
+import { renderResultComparison, mountResultComparison } from './result-comparison.js';
 import { categorySeeds, categoryNameKey, categoryFor, normalizeCategoryData, categoryGroups, categoryScopes, categoryScope, categoryLayout, selectionPlan, attackVectors, vectorCategoryKey, vectorSelectionPlan } from './categories.js';
 
 const evaluationLabels={manual:'수동 판정',exact:'전체 응답 일치',canary:'성공 표식 포함 · 인용·거부 검사',system_prompt_leak:'시스템 프롬프트 원문 유출'};
@@ -62,7 +63,7 @@ const localData={normal:state.normal,attacks:state.attacks,categories:state.cate
 Object.assign(state,{dbChecked:false,dbConfigured:false,dbReady:false,dbError:"",jobs:[],jobSubmitting:false});
 Object.assign(state,{jobPage:1,jobTotal:0,jobPages:1,jobLoading:false,jobError:'',jobRequest:0,jobFilter:null,jobActive:0,resultReport:{defense:'off',purpose:'attack',vector:'all',model:'all',data:null,loading:false,error:'',request:0}});
 Object.assign(state,{liveModel:'',models:[],connection:'idle',connectionError:'',configured:false,running:false,emailError:null,lastLiveResult:null});
-Object.assign(state,{evaluationMenuOpen:false,comparisonDraft:{models:['',''],defense:'off'},singleEvaluationDraft:{model:'',defense:'off'}});
+Object.assign(state,{evaluationMenuOpen:false,resultsMenuOpen:false,comparisonDraft:{models:['',''],defense:'off'},singleEvaluationDraft:{model:'',defense:'off'}});
 Object.assign(state,{attachmentsSupported:false,attachmentDraft:null});
 let activeRequest=null;
 let connectionRequest=null;
@@ -92,7 +93,8 @@ function exportCSV(){
 }
 const navs=[['overview','grid','대시보드'],['email','mail','이메일 요약기'],['evaluation','layers','성능 평가'],['experiments','flask','공격 실험'],['data','database','데이터 관리'],['results','chart','실험 결과']];
 const evaluationRoutes=['single-evaluation','comparison'];
-const routeTitles={overview:'대시보드',email:'이메일 요약기','single-evaluation':'단일 모델 성능 평가',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 결과',settings:'연동 및 개발 현황'};
+const resultsRoutes=['results','normal-result-comparison','attack-result-comparison'];
+const routeTitles={overview:'대시보드',email:'이메일 요약기','single-evaluation':'단일 모델 성능 평가',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 기록','normal-result-comparison':'정상 이메일 평가 성능 비교','attack-result-comparison':'공격 실험 결과 성능 비교',settings:'연동 및 개발 현황'};
 function evaluationNavigation(){
   const active=evaluationRoutes.includes(state.route),open=state.evaluationMenuOpen;
   return `<div class="evaluation-nav"><button type="button" id="evaluation-menu-toggle" class="nav-parent ${active?'active':''}" data-action="toggle-evaluation-menu" aria-expanded="${open}" aria-controls="evaluation-subnav">${icon('layers')}<span>성능 평가</span>${icon('chevron','nav-chevron')}</button><div id="evaluation-subnav" class="evaluation-subnav" ${open?'':'hidden'}>${[['single-evaluation','단일 모델 성능 평가'],['comparison','모델 별 비교']].map(([id,label])=>`<a href="#${id}" class="${state.route===id?'active':''}" ${state.route===id?'aria-current="page"':''}><span class="subnav-dot" aria-hidden="true"></span>${label}</a>`).join('')}</div></div>`;
@@ -102,10 +104,21 @@ function toggleEvaluationMenu(){
   $('#evaluation-menu-toggle')?.setAttribute('aria-expanded',String(state.evaluationMenuOpen));
   const submenu=$('#evaluation-subnav');if(submenu)submenu.hidden=!state.evaluationMenuOpen;
 }
-function shell(){const route=state.route;$('#app').innerHTML=`
+function resultsNavigation(){
+  const active=resultsRoutes.includes(state.route),open=state.resultsMenuOpen;
+  return `<div class="results-nav"><button type="button" id="results-menu-toggle" class="nav-parent ${active?'active':''}" data-action="toggle-results-menu" aria-expanded="${open}" aria-controls="results-subnav">${icon('chart')}<span>실험 결과</span>${icon('chevron','nav-chevron')}</button><div id="results-subnav" class="evaluation-subnav" ${open?'':'hidden'}>${resultsRoutes.map(id=>`<a href="#${id}" class="${state.route===id?'active':''}" ${state.route===id?'aria-current="page"':''}><span class="subnav-dot" aria-hidden="true"></span><span>${routeTitles[id]}</span></a>`).join('')}</div></div>`;
+}
+function toggleResultsMenu(){
+  state.resultsMenuOpen=!state.resultsMenuOpen;
+  $('#results-menu-toggle')?.setAttribute('aria-expanded',String(state.resultsMenuOpen));
+  const submenu=$('#results-subnav');if(submenu)submenu.hidden=!state.resultsMenuOpen;
+}
+let resultComparisonCleanup=null;
+let comparisonDetailRequest=0;
+function shell(){comparisonDetailRequest++;resultComparisonCleanup?.();resultComparisonCleanup=null;const route=state.route;$('#app').innerHTML=`
   <aside class="sidebar" aria-label="주 메뉴">
     <a class="brand" href="#overview" aria-label="핀코드 대시보드"><div class="brandmark">F</div><div class="brand-name">fincode<span class="brand-sub">LLM SECURITY LAB</span></div></a>
-    <div class="nav-label">WORKSPACE</div><nav class="nav">${navs.map(([id,ic,title])=>id==='evaluation'?evaluationNavigation():`<a href="#${id}" class="${route===id?'active':''}" ${route===id?'aria-current="page"':''}>${icon(ic)}${title}</a>`).join('')}</nav>
+    <div class="nav-label">WORKSPACE</div><nav class="nav">${navs.map(([id,ic,title])=>id==='evaluation'?evaluationNavigation():id==='results'?resultsNavigation():`<a href="#${id}" class="${route===id?'active':''}" ${route===id?'aria-current="page"':''}>${icon(ic)}${title}</a>`).join('')}</nav>
     <div class="nav-label" style="margin-top:29px">MANAGEMENT</div><nav class="nav"><a href="#settings" class="${route==='settings'?'active':''}" ${route==='settings'?'aria-current="page"':''}>${icon('settings')}연동 및 개발 현황</a></nav>
     <div class="side-bottom"><a href="#settings"><div class="side-status"><div class="status-line" data-connection>${connectionMarkup()}</div><p>이메일 요약 API · 방어 실험 준비</p></div></a><div class="profile"><div class="avatar">FC</div><div><strong>팀 핀코드</strong><small>한림대학교 · Capstone 2026</small></div></div></div>
   </aside><button class="mobile-shade" data-action="menu" aria-label="메뉴 닫기"></button>
@@ -454,9 +467,8 @@ const resultNumber=(value,digits=0)=>Number.isFinite(value)?value.toLocaleString
 function resultDate(value){const date=new Date(value);return value&&Number.isFinite(date.getTime())?date.toLocaleString('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'—';}
 function liveResultRows(){const report=state.resultReport;return (report.data?.models||[]).filter(row=>report.model==='all'||row.model===report.model);}
 function resultsPage(){
-  return head('EXPERIMENT RESULTS','실험 결과','웹에서 진행한 실험을 확인하고, 실제 실행 데이터를 모델별로 비교하세요.')+
-    databaseResultsPanel()+`<section class="panel results-filter-panel"><div class="panel-head"><div><h2>모델별 비교 조건</h2><p>실험 종류·공격 경로·모델·방어 조건으로 저장된 지표를 조회하세요.</p></div>${tag('실험 종류별 조회','blue')}</div><div class="panel-body"><div class="results-purpose-tabs" role="group" aria-label="비교할 실험 종류">${Object.entries(resultPurposeLabels).map(([id,label])=>`<button class="${state.resultReport.purpose===id?'active':''}" data-action="results-purpose" data-purpose="${id}" aria-pressed="${state.resultReport.purpose===id}">${label}</button>`).join('')}</div><div class="results-filter-row"><label class="results-filter-field" for="live-result-vector"><span class="results-filter-label">공격 경로</span><span class="results-select-control ${state.resultReport.purpose==='attack'?'':'is-disabled'}">${icon('layers')}<select id="live-result-vector" ${state.resultReport.purpose==='attack'?'':'disabled'}>${[['all','전체 경로'],['direct','직접 인젝션'],['indirect','간접 인젝션']].map(([value,label])=>`<option value="${value}" ${state.resultReport.vector===value?'selected':''}>${label}</option>`).join('')}</select>${icon('chevron','results-select-arrow')}</span></label><label class="results-filter-field" for="live-result-model"><span class="results-filter-label">모델</span><span class="results-select-control">${icon('code')}<select id="live-result-model">${resultModelOptions()}</select>${icon('chevron','results-select-arrow')}</span></label><label class="results-filter-field" for="live-result-defense"><span class="results-filter-label">방어 조건</span><span class="results-select-control">${icon('shield')}<select id="live-result-defense">${comparisonDefenses.map(d=>`<option value="${d.id}" ${state.resultReport.defense===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select>${icon('chevron','results-select-arrow')}</span></label><button class="btn" data-action="results-refresh" ${state.dbReady?'':'disabled'}>${icon('clock')}지표 새로고침</button></div></div></section><div id="live-results-content">${liveResultsContent()}</div>`+
-    `<section class="panel results-defense-placeholder"><div class="panel-head"><div><h2>방어 전후 비교 지표</h2><p>위 방어 조건을 바꾸어 같은 모델·데이터 조건의 ASR, 품질, 토큰과 응답시간을 비교하세요. 정상 거부율은 성능 평가 결과에서 확인할 수 있어요.</p></div>${tag('방어 조건 비교 안내','blue')}</div></section>`;
+  return head('EXPERIMENT RESULTS','실험 기록','웹에서 진행한 실험을 확인하고, 실제 실행 데이터를 모델별로 비교하세요.')+
+    databaseResultsPanel()+`<section class="panel results-filter-panel"><div class="panel-head"><div><h2>모델별 비교 조건</h2><p>실험 종류·공격 경로·모델·방어 조건으로 저장된 지표를 조회하세요.</p></div>${tag('실험 종류별 조회','blue')}</div><div class="panel-body"><div class="results-purpose-tabs" role="group" aria-label="비교할 실험 종류">${Object.entries(resultPurposeLabels).map(([id,label])=>`<button class="${state.resultReport.purpose===id?'active':''}" data-action="results-purpose" data-purpose="${id}" aria-pressed="${state.resultReport.purpose===id}">${label}</button>`).join('')}</div><div class="results-filter-row"><label class="results-filter-field" for="live-result-vector"><span class="results-filter-label">공격 경로</span><span class="results-select-control ${state.resultReport.purpose==='attack'?'':'is-disabled'}">${icon('layers')}<select id="live-result-vector" ${state.resultReport.purpose==='attack'?'':'disabled'}>${[['all','전체 경로'],['direct','직접 인젝션'],['indirect','간접 인젝션']].map(([value,label])=>`<option value="${value}" ${state.resultReport.vector===value?'selected':''}>${label}</option>`).join('')}</select>${icon('chevron','results-select-arrow')}</span></label><label class="results-filter-field" for="live-result-model"><span class="results-filter-label">모델</span><span class="results-select-control">${icon('code')}<select id="live-result-model">${resultModelOptions()}</select>${icon('chevron','results-select-arrow')}</span></label><label class="results-filter-field" for="live-result-defense"><span class="results-filter-label">방어 조건</span><span class="results-select-control">${icon('shield')}<select id="live-result-defense">${comparisonDefenses.map(d=>`<option value="${d.id}" ${state.resultReport.defense===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select>${icon('chevron','results-select-arrow')}</span></label><button class="btn" data-action="results-refresh" ${state.dbReady?'':'disabled'}>${icon('clock')}지표 새로고침</button></div></div></section><div id="live-results-content">${liveResultsContent()}</div>`;
 }
 function resultModelOptions(){return '<option value="all">모든 모델</option>'+[...new Map((state.resultReport.data?.models||[]).map(row=>[row.model,row])).values()].map(row=>`<option value="${esc(row.model)}" ${state.resultReport.model===row.model?'selected':''}>${esc(row.model)}</option>`).join('');}
 function resultEmpty(title,description,kind=''){return `<section class="panel results-empty ${kind}" ${kind==='error'?'role="alert"':'role="status"'}>${icon(kind==='error'?'info':'chart')}<h2>${title}</h2><p>${description}</p>${kind==='error'?'<button class="btn" data-action="results-refresh">다시 불러오기</button>':''}</section>`;}
@@ -675,6 +687,19 @@ async function openHistoryPerformance(id){
   location.hash=mode==='single'?'single-evaluation':'comparison';
   await openPerformanceRun(mode,id);
 }
+async function openComparisonRecord({experimentId,kind}){
+  if(!performanceUuid.test(experimentId))return;
+  const request=++comparisonDetailRequest,sourceRoute=state.route;
+  const current=()=>request===comparisonDetailRequest&&state.route===sourceRoute;
+  if(kind==='attack')return showDatabaseExperiment(experimentId,{isCurrent:current});
+  try{
+    const summary=validatePerformanceSummary(await performanceApi('/api/performance/'+encodeURIComponent(experimentId)));
+    if(!current())return;
+    const mode=summary.models.length>1?'comparison':'single';
+    location.hash=mode==='single'?'single-evaluation':'comparison';
+    await openPerformanceRun(mode,experimentId);
+  }catch(error){if(current())toast(error.message||'평가 기록을 불러오지 못했어요.');}
+}
 function effectiveVerdict(run,metric){const all=(run.evaluations||[]).filter(x=>x.metric===metric);return all.filter(x=>x.judge_type==='human').at(-1)||all.at(-1);}
 function verdictStats(runs,metric){
   const applicable=runs.filter(r=>r.expected_label===(metric==='attack_success'?'attack':'normal'));
@@ -731,9 +756,9 @@ function attackReviewForm(run){
 function bindDatabaseJudgments(root,id){
   $$('.db-judgment',root).forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const f=new FormData(form);const button=$('button',form);button.disabled=true;try{await dbApi('/api/runs/'+form.dataset.run+'/evaluations','POST',{metric:form.dataset.metric,value:f.get('value')===''?null:f.get('value')==='true',source:f.get('source'),evidence:f.get('evidence')});await showDatabaseExperiment(id);if(state.route==='results')await refreshResultMetrics({silent:true});toast('판정 이력을 저장했어요.');}catch(error){toast(error.message);button.disabled=false;}}));
 }
-async function showDatabaseExperiment(id){
+async function showDatabaseExperiment(id,{isCurrent=()=>true}={}){
   try{
-    const detail=await dbApi('/api/experiments/'+encodeURIComponent(id));const {experiment,runs}=detail;
+    const detail=await dbApi('/api/experiments/'+encodeURIComponent(id));if(!isCurrent())return;const {experiment,runs}=detail;
     if(experiment.purpose==='attack'){
       if(attackReportState.id!==id)attackReportState={id,view:{}};
       if($('#modal').open)$('#modal').close();
@@ -752,13 +777,17 @@ async function showDatabaseExperiment(id){
     }).join('')}`,`<button class="btn" data-action="db-detail" data-id="${esc(id)}">상태 새로고침</button><button class="btn" id="db-export">실험 JSON 내보내기</button>`);
     $('#db-export').addEventListener('click',()=>download('fincode-experiment-'+id+'.json',JSON.stringify(detail,null,2)));
     bindDatabaseJudgments($('#modal'),id);
-  }catch(error){toast(error.message);}
+  }catch(error){if(isCurrent())toast(error.message);}
 }
 
-const pages={overview,email:emailPage,'single-evaluation':singleEvaluationPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,settings:settingsPage};
-function route(){stopPerformancePolling();clearTimeout(jobPollTimer);state.jobRequest++;state.jobLoading=false;const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;shell();window.scrollTo(0,0);}
+const pages={overview,email:emailPage,'single-evaluation':singleEvaluationPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,'normal-result-comparison':()=>renderResultComparison('normal'),'attack-result-comparison':()=>renderResultComparison('attack'),settings:settingsPage};
+function route(){stopPerformancePolling();clearTimeout(jobPollTimer);state.jobRequest++;state.jobLoading=false;const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;if(resultsRoutes.includes(state.route))state.resultsMenuOpen=true;shell();window.scrollTo(0,0);}
 function bindPage(){
   bindDefenseHistoryControls();
+  if(['normal-result-comparison','attack-result-comparison'].includes(state.route)){
+    resultComparisonCleanup?.();
+    resultComparisonCleanup=mountResultComparison($('#main'),{kind:state.route==='normal-result-comparison'?'normal':'attack',api:dbApi,ready:state.dbReady,onOpenRecord:openComparisonRecord});
+  }
   if(state.route==='overview')dashboardController().load();
   mountPerformance();
   if(state.route==='comparison'){
@@ -1182,6 +1211,7 @@ async function importData(file){if(!file)return;if(!datasetWritable())return;if(
 const actions={
  'dashboard-refresh':()=>dashboardController().load(true),
  'toggle-evaluation-menu':toggleEvaluationMenu,
+ 'toggle-results-menu':toggleResultsMenu,
  'performance-run':el=>submitPerformance(el.dataset.mode),
  'performance-refresh':()=>loadPerformanceData(true),
  'performance-open':el=>openPerformanceRun(el.dataset.mode,el.dataset.id),

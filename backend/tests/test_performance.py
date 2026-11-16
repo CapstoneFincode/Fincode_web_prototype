@@ -141,13 +141,28 @@ class PerformanceTest(unittest.IsolatedAsyncioTestCase):
         invalid=[{'models':[]},{'models':['model-a','model-a']},{'models':[f'model-{n}' for n in range(6)]},
             {'models':['']},{'models':['codex-model']},{'emailIds':[]},{'emailIds':[first,first]},
             {'emailIds':[str(uuid4()) for _ in range(101)]},{'emailIds':[sample['dbId']]},
-            {'emailIds':[str(uuid4())]},{'datasetId':'other-dataset'},{'defense':'filter'},{'repeat':2}]
+            {'emailIds':[str(uuid4())]},{'datasetId':'other-dataset'},{'defense':'unsupported'},{'repeat':2}]
         for change in invalid:
             with self.subTest(change=change):
                 response=await self.client.post('/api/performance',json=self.payload(**change))
                 self.assertIn(response.status_code,(400,409,422),response.text)
         with self.db.connect() as conn:
             self.assertEqual(conn.execute('SELECT count(*) AS n FROM experiments').fetchone()['n'],0)
+        self.assertEqual(self.calls,[])
+
+    async def test_supported_defense_modes_are_frozen_without_model_calls(self):
+        first=self.rows[SOURCES[0]['id']]['dbId']
+        for defense in ['off','filter','separate','both']:
+            with self.subTest(defense=defense):
+                identifier=await self.start(emailIds=[first],models=['model-a'],defense=defense)
+                with self.db.connect() as conn:
+                    run=conn.execute('''SELECT e.execution_plan,c.input_snapshot,r.security_gateway_enabled,r.defense_profile_id
+                        FROM experiments e JOIN experiment_cases c ON c.experiment_id=e.id
+                        JOIN runs r ON r.experiment_case_id=c.id WHERE e.id=%s''',(identifier,)).fetchone()
+                self.assertEqual(run['execution_plan']['defense'],defense)
+                self.assertEqual(run['input_snapshot'].get('defenseMode','off'),defense)
+                self.assertEqual(run['security_gateway_enabled'],defense!='off')
+                self.assertEqual(run['defense_profile_id'] is not None,defense!='off')
         self.assertEqual(self.calls,[])
 
     async def test_dataset_uses_only_latest_unarchived_matching_input(self):

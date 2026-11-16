@@ -288,13 +288,20 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
         await self.app.state.worker_once()
         run=(await self.detail(eid))['runs'][0]
         self.assertIsNone(run['service_total_tokens'])
+        automatic=run['evaluations']
+        self.assertEqual(len(automatic),1)
+        self.assertEqual((automatic[0]['metric'],automatic[0]['judge_type'],automatic[0]['evaluator_version']),
+                         ('normal_rejection','rule','normal-rejection-v1'))
         path='/api/runs/'+run['id']+'/evaluations'
         invalid=await self.client.post(path,json={'metric':'normal_rejection','value':True,'source':'security_gateway','evidence':'OFF cannot be Gateway FPR'})
         self.assertEqual(invalid.status_code,400)
         for value in [True,None,False]:
             result=await self.client.post(path,json={'metric':'normal_rejection','value':value,'source':'model_provider','evidence':'human review'})
             self.assertEqual(result.status_code,200,result.text)
-        self.assertEqual(len((await self.detail(eid))['runs'][0]['evaluations']),3)
+        history=(await self.detail(eid))['runs'][0]['evaluations']
+        self.assertEqual([evaluation for evaluation in history if evaluation['judge_type']=='rule'],automatic)
+        self.assertEqual([evaluation['boolean_value'] for evaluation in history if evaluation['judge_type']=='human'],
+                         [True,None,False])
         self.answer='';self.usage={'total_tokens':7}
         eid=await self.start()
         await self.app.state.worker_once()
