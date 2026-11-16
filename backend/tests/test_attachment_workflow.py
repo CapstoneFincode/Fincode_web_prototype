@@ -67,7 +67,7 @@ class AttachmentWorkflowTest(unittest.IsolatedAsyncioTestCase):
 
     async def scenario(self, attachments, **changes):
         data = {'name': '첨부파일 실험', 'vector': 'indirect', 'channel': 'attachment',
-                'categoryId': 'attachment-injection', 'technique': 'attachment-text', 'goal': 'test marker',
+                'categoryId': 'instruction-override', 'technique': 'attachment-text', 'goal': 'test marker',
                 'payload': '', 'criterion': '전체 응답 일치', 'evaluationMode': 'exact',
                 'expectedOutput': 'FILE_TEST_MARKER', 'attachmentIds': [item['id'] for item in attachments], **changes}
         response = await self.client.post('/api/data/attacks', json=data)
@@ -160,7 +160,7 @@ class AttachmentWorkflowTest(unittest.IsolatedAsyncioTestCase):
     async def test_direct_attack_cannot_smuggle_an_attachment(self):
         item = await self.upload()
         response = await self.client.post('/api/data/attacks', json={
-            'name': 'invalid direct attachment', 'vector': 'direct', 'channel': 'input',
+            'name': 'invalid direct attachment', 'categoryId': 'instruction-override', 'vector': 'direct', 'channel': 'input',
             'technique': 'test', 'goal': 'test', 'payload': 'text', 'criterion': 'test',
             'attachmentIds': [item['id']]})
         self.assertEqual(response.status_code, 400, response.text)

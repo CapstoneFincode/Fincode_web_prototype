@@ -2,7 +2,7 @@
 export const categorySeeds = [
   {id:'system-prompt-leak',name:'시스템 프롬프트 유출',scope:'both'},
   {id:'instruction-override',name:'지시 덮어쓰기',scope:'both'},
-  {id:'role-spoofing',name:'역할·권한 사칭',scope:'both'},
+  {id:'role-spoofing',name:'시스템 프롬포트 재정의',scope:'both'},
   {id:'special-token',name:'특수 토큰 인젝션',scope:'both'},
   {id:'hidden-text',name:'비가시 문자 은닉',scope:'both'},
   {id:'attachment-injection',name:'첨부 콘텐츠 주입',scope:'indirect'},
@@ -12,7 +12,8 @@ export const categoryScopes = ['direct','indirect','both'];
 export const categoryScope = category => category.scope===undefined?(category.id==='attachment-injection'?'indirect':'both'):category.scope;
 export const categoryNameKey = value => value.normalize('NFKC').trim().replace(/\s+/gu,' ').toLocaleLowerCase('ko');
 export const categoryFor = attack => attack.categoryId || 'uncategorized';
-export function normalizeCategoryData(categories, attacks){
+// Retain legacy categories only when a restored record still references them.
+export function normalizeCategoryData(categories, attacks, {current=false}={}){
   const catalog = categories === undefined ? structuredClone(categorySeeds) : structuredClone(categories);
   if(!Array.isArray(catalog)||catalog.length>1000)throw Error('카테고리 목록 형식을 확인해 주세요.');
   const ids=new Set(),names=new Set();
@@ -26,13 +27,21 @@ export function normalizeCategoryData(categories, attacks){
     if(!categoryScopes.includes(scope)||(item.id==='uncategorized'&&scope!=='both'))throw Error('카테고리 적용 경로를 확인해 주세요. 미분류는 공통으로 유지해 주세요.');
     ids.add(item.id);names.add(key);item.name=normalized;item.scope=scope;
   }
-  if(!ids.has('uncategorized')){if(catalog.length>=1000)throw Error('카테고리는 미분류를 포함해 최대 1,000개까지 지원해요.');if(names.has(categoryNameKey('미분류')))throw Error('미분류는 기본 카테고리 이름이에요.');catalog.push({id:'uncategorized',name:'미분류',scope:'both'});ids.add('uncategorized');}
+  for(const id of ['uncategorized','attachment-injection']){
+    if(!ids.has(id)&&attacks.some(item=>categoryFor(item)===id)){
+      const legacy=categorySeeds.find(item=>item.id===id);
+      if(catalog.length>=1000||names.has(categoryNameKey(legacy.name)))throw Error('이전 카테고리를 복원할 수 없어요. 백업의 카테고리를 확인해 주세요.');
+      catalog.push({...legacy});ids.add(id);names.add(categoryNameKey(legacy.name));
+    }
+  }
   const rows=attacks.map(item=>{
     const categoryId=categoryFor(item);
     if(!ids.has(categoryId))throw Error('시나리오의 카테고리가 목록에 없어요. 카테고리를 포함한 백업을 사용해 주세요.');
     return {...item,categoryId};
   });
-  return {categories:catalog,attacks:rows};
+  const visible=current?catalog.filter(c=>!['uncategorized','attachment-injection'].includes(c.id)||rows.some(a=>a.categoryId===c.id))
+    .map(c=>c.id==='role-spoofing'?{...c,name:'시스템 프롬포트 재정의'}:c):catalog;
+  return {categories:visible,attacks:rows};
 }
 // A selected file name alone is not executable: all referenced server objects must be ready.
 export function attachmentScenarioReady(attack){

@@ -89,11 +89,11 @@ class CategoryScopeDatabaseTest(unittest.IsolatedAsyncioTestCase):
         missing = await self.client.put('/api/categories/missing', json={'scope':'both','expectedScope':'both'})
         self.assertEqual(missing.status_code, 404)
         protected = await self.client.put('/api/categories/uncategorized', json={'scope':'direct','expectedScope':'both'})
-        self.assertEqual(protected.status_code, 400)
-        self.assertEqual(protected.json()['error']['code'], 'CATEGORY_SCOPE_FIXED')
+        self.assertEqual(protected.status_code, 404)
+        self.assertEqual(protected.json()['error']['code'], 'CATEGORY_NOT_FOUND')
         unchanged = (await self.client.get('/api/data')).json()['categories']
         self.assertEqual(next(c for c in unchanged if c['id'] == category['id']), updated)
-        self.assertEqual(next(c for c in unchanged if c['id'] == 'uncategorized')['scope'], 'both')
+        self.assertFalse(any(c['id'] == 'uncategorized' for c in unchanged))
         denied = await self.client.put(path, json={'scope':'both','expectedScope':'indirect'}, headers={'Origin':'https://evil.example'})
         self.assertEqual(denied.status_code, 403)
 

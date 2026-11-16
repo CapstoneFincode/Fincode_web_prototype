@@ -86,19 +86,44 @@ class CategoryDatabaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(previous['category_id'], category['id'])
         self.assertEqual(previous['payload'], ATTACK['payload'])
 
-    async def test_unknown_categories_rejected_and_old_payload_defaults(self):
+    async def test_deleted_and_missing_categories_rejected(self):
         before = (await self.client.get('/api/data')).json()
-        for category in ['missing-category', '', None]:
+        for category in ['missing-category', '', None, 'uncategorized', 'attachment-injection']:
             response = await self.client.post('/api/data/attacks', json={**ATTACK, 'categoryId':category})
             self.assertEqual(response.status_code, 400, response.text)
         after = (await self.client.get('/api/data')).json()
         self.assertEqual(len(before['attacks']), len(after['attacks']))
         created = await self.client.post('/api/data/attacks', json=ATTACK)
-        self.assertEqual(created.status_code, 200, created.text)
-        self.assertEqual(created.json()['attacks'][-1]['categoryId'], 'uncategorized')
+        self.assertEqual(created.status_code, 400, created.text)
+        created = await self.client.post('/api/data/attacks', json={**ATTACK,'categoryId':'instruction-override'})
+        self.assertEqual(created.status_code,200,created.text)
         self.assertFalse(any(a['id'] == 'ATK-S07' and a['provenance'] == 'sample'
                              for a in created.json()['attacks']))
         self.assertTrue(any(c['id'] == 'special-token' for c in created.json()['categories']))
+
+    async def test_catalog_retirement_preserves_references_and_history(self):
+        schema = 'category_retirement_' + uuid4().hex
+        migration = (ROOT/'database/migrations/008_category_catalog_cleanup.sql').read_text().replace('fincode.', schema + '.')
+        with self.db.connect() as conn:
+            conn.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
+            try:
+                conn.execute(sql.SQL('''CREATE TABLE {}.attack_categories (
+                    id text PRIMARY KEY, name text, normalized_name text)''').format(sql.Identifier(schema)))
+                for identifier, name in [('role-spoofing','역할·권한 사칭'),('uncategorized','미분류'),('attachment-injection','첨부 콘텐츠 주입')]:
+                    conn.execute(sql.SQL('INSERT INTO {}.attack_categories VALUES (%s,%s,%s)').format(sql.Identifier(schema)),(identifier,name,name))
+                conn.execute(sql.SQL('''CREATE TABLE {}.attack_scenarios (
+                    id text PRIMARY KEY, category_id text NOT NULL DEFAULT 'uncategorized'
+                    REFERENCES {}.attack_categories(id), payload text)''').format(sql.Identifier(schema),sql.Identifier(schema)))
+                conn.execute(sql.SQL('INSERT INTO {}.attack_scenarios VALUES (%s,%s,%s)').format(sql.Identifier(schema)),('old-revision','attachment-injection','unchanged payload'))
+                before = conn.execute(sql.SQL('SELECT * FROM {}.attack_scenarios').format(sql.Identifier(schema))).fetchall()
+                conn.execute(migration,prepare=False)
+                after = conn.execute(sql.SQL('SELECT * FROM {}.attack_scenarios').format(sql.Identifier(schema))).fetchall()
+                self.assertEqual(before,after)
+                catalog = conn.execute(sql.SQL('SELECT * FROM {}.attack_categories').format(sql.Identifier(schema))).fetchall()
+                self.assertEqual(next(c['name'] for c in catalog if c['id']=='role-spoofing'),'시스템 프롬포트 재정의')
+                self.assertEqual({c['id'] for c in catalog if c['archived_at'] is not None},{'uncategorized','attachment-injection'})
+            finally:
+                conn.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
 
     async def test_queued_experiment_preserves_category_after_scenario_edit(self):
         category = await self.create_category()

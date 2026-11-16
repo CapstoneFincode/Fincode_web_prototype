@@ -105,7 +105,10 @@ class Database:
                 min(created_at) OVER (PARTITION BY scenario_key) AS registered_at
                 FROM attack_scenarios a ORDER BY scenario_key,revision DESC) a
                 WHERE archived_at IS NULL ORDER BY registered_at,scenario_key''').fetchall()
-            categories = conn.execute('SELECT id,name,scope FROM attack_categories ORDER BY sort_order,name,id').fetchall()
+            # Retired catalog rows remain for old revision/run references.
+            categories = conn.execute('''SELECT id,name,scope FROM attack_categories
+                WHERE archived_at IS NULL OR id=ANY(%s) ORDER BY sort_order,name,id''',
+                ([r['category_id'] for r in attacks],)).fetchall()
             from backend.attachments import load_attachments
             attachment_catalog = {}
             for row in attacks:
@@ -209,7 +212,7 @@ class Database:
         scope = category_scope(data.get('scope'))
         expected = category_scope(data.get('expectedScope'))
         with self.connect() as conn:
-            current = conn.execute('SELECT scope FROM attack_categories WHERE id=%s FOR UPDATE', (identifier,)).fetchone()
+            current = conn.execute('SELECT scope FROM attack_categories WHERE id=%s AND archived_at IS NULL FOR UPDATE', (identifier,)).fetchone()
             if not current:
                 raise DataError('카테고리를 찾을 수 없습니다.',404,'CATEGORY_NOT_FOUND')
             if current['scope'] != expected:
@@ -241,8 +244,8 @@ class Database:
                 insert(conn,'ground_truths',dict(id=str(uuid4()), email_case_id=identifier, revision=1, reference_summary=ref,
                     required_facts=facts, review_status='sample' if sample else 'draft', created_by=self.actor))
         elif kind == 'attacks':
-            category_id = text(data.get('categoryId', 'uncategorized'), '카테고리', 80)
-            if not conn.execute('SELECT id FROM attack_categories WHERE id=%s', (category_id,)).fetchone():
+            category_id = text(data.get('categoryId'), '카테고리', 80)
+            if not conn.execute('SELECT id FROM attack_categories WHERE id=%s AND archived_at IS NULL', (category_id,)).fetchone():
                 raise DataError('등록된 카테고리를 선택해 주세요.',400,'UNKNOWN_CATEGORY')
             vector, channel = data.get('vector'), data.get('channel')
             if vector not in ('direct','indirect') or channel not in ('input','email','attachment') or (vector=='direct') != (channel=='input'):

@@ -45,8 +45,8 @@ test('catalog rejects unknown references, duplicates, format controls, and norma
   assert.throws(()=>normalizeCategoryData([...categorySeeds,{id:'custom',name:'  지시 덮어쓰기  '}],[]));
   assert.throws(()=>normalizeCategoryData([...categorySeeds,{id:'custom',name:'ﬃ'.repeat(30)}],[]));
   assert.throws(()=>normalizeCategoryData([...categorySeeds,{id:'custom',name:'A\u200bB'}],[]));
-  assert.throws(()=>normalizeCategoryData([{id:'custom',name:'미분류'}],[]));
-  assert.throws(()=>normalizeCategoryData(Array.from({length:1000},(_,i)=>({id:'cat'+i,name:'Category '+i})),[]));
+  assert.throws(()=>normalizeCategoryData([{id:'custom',name:'미분류'}],[row('legacy',{categoryId:'uncategorized'})]));
+  assert.throws(()=>normalizeCategoryData(Array.from({length:1001},(_,i)=>({id:'cat'+i,name:'Category '+i})),[]));
 });
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm,'')
@@ -93,7 +93,7 @@ test('category filter combines with route filter/search and sorts without droppi
 test('custom category catalog and assignment survive export-shaped persistence/reload',()=>{
   const d=backup();d.categories.push({id:'custom-empty',name:'아직 비어 있는 분류'},{id:'custom-filled',name:'다국어 우회'});d.attacks[0].categoryId='custom-filled';
   const first=app({saved:d});first.api.persist();const saved=first.writes.at(-1).value;const next=app({saved});
-  assert.equal(next.api.state.categories.length,9);assert.equal(next.api.state.attacks[0].categoryId,'custom-filled');
+  assert.equal(next.api.state.categories.length,8);assert.equal(next.api.state.attacks[0].categoryId,'custom-filled');
   assert.equal(next.api.state.categories.find(c=>c.id==='custom-empty').name,'아직 비어 있는 분류');
 });
 test('older backends cannot silently discard category changes',()=>{
@@ -309,7 +309,7 @@ test('category create and scope edit persist locally without changing scenarios 
   const planBefore=JSON.stringify(a.state.plans);a.categoryScopeForm();elements['#category-scope'].value='direct';await elements['#category-scope-form'].listeners.submit({preventDefault(){}});
   assert.equal(a.state.categories.find(c=>c.id==='instruction-override').scope,'direct');assert.equal(JSON.stringify(a.state.attacks),before);assert.equal(JSON.stringify(a.state.plans),planBefore);
   const reloaded=app({saved:{...backup(),categories:structuredClone(a.state.categories)}});assert.equal(reloaded.api.state.categories.find(c=>c.id===created.id).scope,'indirect');
-  a.categoryScopeForm();elements['#scope-category'].value='uncategorized';elements['#scope-category'].listeners.change();assert.equal(elements['#category-scope'].disabled,true);assert.equal(elements['#category-submit'].disabled,true);
+  a.state.categories.push({id:'uncategorized',name:'미분류',scope:'both'});a.categoryScopeForm();elements['#scope-category'].value='uncategorized';elements['#scope-category'].listeners.change();assert.equal(elements['#category-scope'].disabled,true);assert.equal(elements['#category-submit'].disabled,true);
 });
 test('old category APIs cannot silently discard scope assignments',()=>{
   const elements=categoryFormElements(),{api:a,toasts}=app({elements});Object.assign(a.state,{dbChecked:true,dbConfigured:true,dbReady:true,tab:'attacks'});
@@ -339,3 +339,17 @@ test('creating a DB category includes the chosen scope and verifies it in the re
   Object.assign(a.state,{dbChecked:true,dbConfigured:true,dbReady:true});a.adoptDatabase(dataset);a.categoryForm();await elements['#category-form'].listeners.submit({preventDefault(){}});
   assert.deepEqual(calls,[{url:'/api/categories',payload:{name:'새 빈 카테고리',scope:'indirect'}}]);assert.equal(a.state.categories.find(c=>c.id==='new-category').scope,'indirect');assert.equal(a.state.categoryFilter,'new-category');assert.equal(elements['#modal'].open,false);
 });
+
+ test('current catalog removes retired empty categories and preserves legacy records and snapshots',()=>{
+  const old=categorySeeds.map(c=>c.id==='role-spoofing'?{...c,name:'역할·권한 사칭'}:{...c});
+  const current=normalizeCategoryData(old,[],{current:true});
+  assert.equal(current.categories.length,5);
+  assert.equal(current.categories.find(c=>c.id==='role-spoofing').name,'시스템 프롬포트 재정의');
+  assert.equal(normalizeCategoryData(current.categories,[],{current:true}).categories.length,5);
+  assert.equal(normalizeCategoryData(old,[]).categories.find(c=>c.id==='role-spoofing').name,'역할·권한 사칭');
+  const legacy=row('legacy',{categoryId:'uncategorized'});
+  const restored=normalizeCategoryData(current.categories,[legacy],{current:true});
+  assert.equal(restored.categories.length,6);assert.equal(restored.attacks[0].id,'legacy');
+  const {api:a}=app({saved:null});assert.equal(a.state.categories.length,5);
+  a.adoptDatabase({normal:[],attacks:[],categories:old});assert.equal(a.state.categories.length,5);
+ });
