@@ -89,12 +89,12 @@ function exportCSV(){
   const values=rows.map(r=>[report.purpose,report.purpose==='attack'?report.vector:'all',report.defense||'off',r.provider,r.model,(r.returnedModels||[]).join(' / '),r.experiments,r.total,r.succeeded,r.errors,r.queued,r.running,r.cancelled,r.attack?.successes,r.attack?.failures,r.attack?.indeterminate,r.attack?.unjudged,r.attack?.judged,r.attack?.asr,r.latencyMsMean,r.latencyReportedCount,r.tokens?.inputMean,r.tokens?.inputReportedCount,r.tokens?.outputMean,r.tokens?.outputReportedCount,r.tokens?.totalMean,r.tokens?.totalReportedCount,r.quality?.gradedCount,r.quality?.meanRougeL,r.scenarioCount,r.scenarioVersionCount,(r.promptVersions||[]).join(' / '),(r.inputModes||[]).join(' / '),(r.evaluatorVersions||[]).join(' / '),r.firstRunAt,r.lastRunAt,report.data.generatedAt]);
   download('fincode-model-results-'+report.purpose+'.csv','\ufeff'+[headers,...values].map(row=>row.map(resultCsvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
 }
-const navs=[['overview','grid','대시보드'],['evaluation','layers','성능 평가'],['experiments','flask','공격 실험'],['data','database','데이터 관리'],['results','chart','실험 결과']];
-const evaluationRoutes=['email','single-evaluation','comparison'];
+const navs=[['overview','grid','대시보드'],['email','mail','이메일 요약기'],['evaluation','layers','성능 평가'],['experiments','flask','공격 실험'],['data','database','데이터 관리'],['results','chart','실험 결과']];
+const evaluationRoutes=['single-evaluation','comparison'];
 const routeTitles={overview:'대시보드',email:'이메일 요약기','single-evaluation':'단일 모델 성능 평가',comparison:'모델 별 비교',experiments:'공격 실험',data:'데이터 관리',results:'실험 결과',settings:'연동 및 개발 현황'};
 function evaluationNavigation(){
   const active=evaluationRoutes.includes(state.route),open=state.evaluationMenuOpen;
-  return `<div class="evaluation-nav"><button type="button" id="evaluation-menu-toggle" class="nav-parent ${active?'active':''}" data-action="toggle-evaluation-menu" aria-expanded="${open}" aria-controls="evaluation-subnav">${icon('layers')}<span>성능 평가</span>${icon('chevron','nav-chevron')}</button><div id="evaluation-subnav" class="evaluation-subnav" ${open?'':'hidden'}>${[['email','이메일 요약기'],['single-evaluation','단일 모델 성능 평가'],['comparison','모델 별 비교']].map(([id,label])=>`<a href="#${id}" class="${state.route===id?'active':''}" ${state.route===id?'aria-current="page"':''}><span class="subnav-dot" aria-hidden="true"></span>${label}</a>`).join('')}</div></div>`;
+  return `<div class="evaluation-nav"><button type="button" id="evaluation-menu-toggle" class="nav-parent ${active?'active':''}" data-action="toggle-evaluation-menu" aria-expanded="${open}" aria-controls="evaluation-subnav">${icon('layers')}<span>성능 평가</span>${icon('chevron','nav-chevron')}</button><div id="evaluation-subnav" class="evaluation-subnav" ${open?'':'hidden'}>${[['single-evaluation','단일 모델 성능 평가'],['comparison','모델 별 비교']].map(([id,label])=>`<a href="#${id}" class="${state.route===id?'active':''}" ${state.route===id?'aria-current="page"':''}><span class="subnav-dot" aria-hidden="true"></span>${label}</a>`).join('')}</div></div>`;
 }
 function toggleEvaluationMenu(){
   state.evaluationMenuOpen=!state.evaluationMenuOpen;

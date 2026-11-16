@@ -39,16 +39,16 @@ function app(){
     document:{addEventListener(){},querySelector:selector=>elements[selector]??null,
       querySelectorAll:selector=>queryLists[selector]??[],getElementById:id=>elements['#'+id]??null},
     window:{addEventListener(){},scrollTo(){}},toasts,shellCalls:0});
-  vm.runInContext(source+'\nshell=()=>{shellCalls++;};toast=message=>toasts.push(message);globalThis.api={state,pages,evaluationNavigation,toggleEvaluationMenu,comparisonPage,comparisonSummary,updateComparisonDraft,addComparisonModel,removeComparisonModel,singleEvaluationSummary,updateSingleEvaluationDraft,route,bindPage,actions,summaryRequest,gtCount};',context);
+  vm.runInContext(source+'\nshell=()=>{shellCalls++;};toast=message=>toasts.push(message);globalThis.api={state,pages,navs,evaluationNavigation,toggleEvaluationMenu,comparisonPage,comparisonSummary,updateComparisonDraft,addComparisonModel,removeComparisonModel,singleEvaluationSummary,updateSingleEvaluationDraft,route,bindPage,actions,summaryRequest,gtCount};',context);
   return {api:context.api,context,elements,calls,location,toasts,queryLists};
 }
 const plain=value=>JSON.parse(JSON.stringify(value));
 const openingTag=(html,name,id)=>(html.match(new RegExp('<'+name+'\\b[^>]*>','g'))||[]).find(tag=>tag.includes('id="'+id+'"'));
 const linkFor=(html,hash)=>(html.match(/<a\b[^>]*>/g)||[]).find(tag=>tag.includes('href="'+hash+'"'));
 
-test('all evaluation deep links open their shared group and mark only the current child',()=>{
+test('evaluation deep links share a group while the email summarizer remains a standalone menu',()=>{
   const {api:a,location}=app();
-  for(const route of ['email','single-evaluation','comparison']){
+  for(const route of ['single-evaluation','comparison']){
     a.state.evaluationMenuOpen=false;location.hash='#'+route;a.route();
     assert.equal(a.state.route,route);assert.equal(a.state.evaluationMenuOpen,true);
     const html=a.evaluationNavigation();
@@ -57,10 +57,18 @@ test('all evaluation deep links open their shared group and mark only the curren
     assert.match(openingTag(html,'button','evaluation-menu-toggle'),/aria-expanded="true"/);
     assert.match(openingTag(html,'button','evaluation-menu-toggle'),/class="[^"]*\bactive\b/);
     assert.match(linkFor(html,'#'+route),/aria-current="page"/);
-    for(const other of ['email','single-evaluation','comparison'].filter(child=>child!==route)){
+    for(const other of ['single-evaluation','comparison'].filter(child=>child!==route)){
       assert.doesNotMatch(linkFor(html,'#'+other),/aria-current="page"/);
     }
   }
+  assert.equal(a.navs.filter(([id])=>id==='email').length,1);
+  assert.equal(a.navs.find(([id])=>id==='email')[2],'이메일 요약기');
+  a.state.evaluationMenuOpen=false;location.hash='#email';a.route();
+  assert.equal(a.state.route,'email');assert.equal(a.state.evaluationMenuOpen,false);
+  const evaluation=a.evaluationNavigation();
+  assert.doesNotMatch(evaluation,/href="#email"|aria-current="page"/);
+  assert.doesNotMatch(openingTag(evaluation,'button','evaluation-menu-toggle'),/class="[^"]*\bactive\b/);
+  assert.match(openingTag(evaluation,'button','evaluation-menu-toggle'),/aria-expanded="false"/);
   location.hash='#missing';a.route();assert.equal(a.state.route,'overview');
 });
 
