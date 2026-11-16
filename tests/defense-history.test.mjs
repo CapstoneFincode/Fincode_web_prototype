@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {load,flatten,select,defaults,StaleHistory} from '../public/defense-history.js';
+import {load,flatten,select,defaults,StaleHistory,combined,groupExperiments,selectExperiments} from '../public/defense-history.js';
 const run=(id,extra={})=>({id,expected_label:'attack',security_gateway_enabled:true,status:'succeeded',repeat_index:1,requested_model:'gemini-test',created_at:'2026-11-16T01:00:00Z',input_snapshot:{defenseMode:'separate',attackScenario:{key:'s-'+id,name:'시나리오 '+id,vector:'direct',payload:'공격 본문 '+id},messages:[{role:'system',content:'검색 제외 시스템 지침'},{role:'user',content:'원본 공격 본문 '+id}]},evaluations:[{metric:'attack_success',judge_type:'rule',decision_status:'determinate',boolean_value:false}],...extra});
 const detail=(id,runs)=>({experiment:{id,purpose:'attack',execution_plan:{defense:'separate'}},runs});
 const page=(rows,total=rows.length,totalPages=1,n=1)=>({experiments:rows,page:n,pageSize:100,total,totalPages});
@@ -25,7 +25,7 @@ test('oldest/newest sorting and filtered page counts are deterministic',()=>{
  const rows=flatten([detail('p',Array.from({length:11},(_,i)=>run(String(i),{created_at:`2026-11-16T01:${String(i).padStart(2,'0')}:00Z`})))]);const newest=select(rows,{...defaults(),sort:'newest'},2);assert.equal(newest.total,11);assert.equal(newest.totalPages,3);assert.deepEqual(newest.rows.map(r=>r.id),['5','4','3','2','1']);assert.equal(select(rows,{...defaults(),sort:'oldest'}).rows[0].id,'0');assert.equal(select(rows,defaults(),99).page,3);assert.equal(select(rows,{...defaults(),query:'no-match'},99).page,1);
 });
 test('registration order uses scenario registration metadata rather than last execution',()=>{
- const a=run('1'),b=run('2');const rows=flatten([detail('p',[a,b])],[{id:'s-1',registeredAt:'2026-11-10'},{id:'s-2',registeredAt:'2026-11-01'}]);assert.equal(select(rows).rows[0].id,'2');
+ const a=run('1'),b=run('2');const rows=flatten([detail('p',[a,b])],[{id:'s-1',registeredAt:'2026-11-10'},{id:'s-2',registeredAt:'2026-11-01'}]);assert.equal(select(rows,{...defaults(),sort:'registered'}).rows[0].id,'2');
 });
 test('unknown ON mode remains unknown and latest human verdict wins',()=>{
  const a=run('1',{input_snapshot:{},evaluations:[{metric:'attack_success',judge_type:'rule',decision_status:'determinate',boolean_value:false},{metric:'attack_success',judge_type:'human',decision_status:'determinate',boolean_value:true}]});const rows=flatten([{experiment:{id:'p'},runs:[a]}]);assert.equal(rows[0].mode,'unknown');assert.equal(rows[0].outcome,'success');
@@ -43,4 +43,36 @@ test('stale navigation aborts before further requests',async()=>{
 });
 test('duplicate runs are rejected and an empty history remains valid',async()=>{
  assert.throws(()=>flatten([detail('p',[run('1'),run('1')])]),/중복/);assert.deepEqual(await load(async()=>page([])),[]);
+});
+
+ test('all loader fetches only ON attack details and keeps original parent records immutable',async()=>{
+ const entries=[{...parent('on',2),defense_enabled:true},{...parent('off'),defense_enabled:false},{...parent('normal'),purpose:'normal',defense_enabled:true},{...parent('performance'),purpose:'performance'}];const original=structuredClone(entries),requests=[];
+ const loaded=await load(async path=>{requests.push(path);return path.includes('?')?{...page(entries),activeCount:1}:detail('on',[run('a'),run('b')]);},{group:'all'});
+ const result=combined(loaded);assert.equal(requests.length,2);assert.equal(requests[0],'/api/experiments?page=1&pageSize=100');assert.equal(requests[1],'/api/experiments/on');assert.equal(result.rows.length,4);assert.equal(result.defenseRows.length,1);assert.equal(result.activeCount,1);assert.deepEqual(entries,original);
+ assert.equal(result.rows.filter(r=>r.defense_run_id).length,0);assert.deepEqual(result.rows.map(r=>r.id).sort(),['normal','off','on','performance']);assert.equal(result.rows.find(r=>r.id==='on').total,2);
+ });
+
+
+test('one experiment retains all scenarios, repeats and defense conditions while equal names stay separate',()=>{
+ const ds=[{...detail('first',[run('1'),run('2',{repeat_index:2}),run('3',{input_snapshot:{defenseMode:'filter'}})]),summary:{name:'동일 실험명',status:'completed',models:['gemini-test']}},{...detail('second',[run('4')]),summary:{name:'동일 실험명'}}];
+ const original=structuredClone(ds),rows=groupExperiments(ds);
+ assert.equal(rows.length,2);assert.deepEqual(rows.map(e=>e.id),['first','second']);assert.equal(rows[0].total,3);assert.equal(rows[0].finished,3);assert.deepEqual(rows[0].defense_modes,['separate','filter']);assert.deepEqual(ds,original);
+});
+test('filters match the same run and return the entire parent, including unmatched runs',()=>{
+ const a=run('1');a.input_snapshot.attackScenario.vector='indirect';a.input_snapshot.defenseMode='filter';
+ const b=run('2',{requested_model:'other-model'});const rows=groupExperiments([{...detail('parent',[a,b]),summary:{name:'팀 최종 실험'}}]);
+ const filters={...defaults(),query:'공격 본문 1',mode:'filter',vector:'indirect',outcome:'failure'};
+ const selected=selectExperiments(rows,filters);assert.equal(selected.total,1);assert.equal(selected.rows[0].id,'parent');assert.equal(selected.rows[0].total,2);assert.equal(selected.rows[0].runRows.length,2);
+ assert.equal(selectExperiments(rows,{...defaults(),mode:'filter',vector:'direct'}).total,0);
+ assert.equal(selectExperiments(rows,filters,1,5,{model:'other-model'}).total,0);
+ assert.equal(selectExperiments(rows,{...defaults(),query:'팀 최종'}).total,1);
+ assert.equal(selectExperiments(rows,{...defaults(),query:'검색 제외 시스템 지침'}).total,0);
+});
+test('pagination and dates count experiments, not individual executions',()=>{
+ const rows=groupExperiments(Array.from({length:11},(_,i)=>({...detail('exp-'+i,[run(i+'a'),run(i+'b')]),summary:{created_at:`2026-11-${String(i+1).padStart(2,'0')}`}})));
+ const result=selectExperiments(rows,defaults(),2);assert.equal(result.total,11);assert.equal(result.totalPages,3);assert.deepEqual(result.rows.map(e=>e.id),['exp-5','exp-4','exp-3','exp-2','exp-1']);assert.equal(selectExperiments(rows,defaults(),99).page,3);assert.equal(selectExperiments(rows,{...defaults(),query:'missing'},99).page,1);
+});
+test('pending, blocked, failed and cancelled runs retain accurate parent progress',()=>{
+ const rows=groupExperiments([detail('active',[run('1',{status:'blocked'}),run('2',{status:'failed'}),run('3',{status:'cancelled'}),run('4',{status:'running'}),run('5',{status:'queued'})])]);
+ assert.equal(rows[0].total,5);assert.equal(rows[0].finished,3);assert.equal(rows[0].active,true);
 });

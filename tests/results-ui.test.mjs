@@ -6,7 +6,7 @@ import {webcrypto} from 'node:crypto';
 import * as seeds from '../public/data.js';
 import * as categoryTools from '../public/categories.js';
 import * as defenseHistory from '../public/defense-history.js';
-import {recordedDefenseLabel} from '../public/attack-results.js';
+import {recordedDefenseLabel,experimentDefenseLabel} from '../public/attack-results.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
   .replace(/^import[^\n]+\n/gm,'')
@@ -24,22 +24,22 @@ const model=(name='model-a',extra={})=>({model:name,provider:'baze',returnedMode
   firstRunAt:'2026-11-10T05:00:00Z',lastRunAt:'2026-11-11T05:00:00Z',quality:null,...extra});
 const metrics=(purpose='attack',vector='all',rows=[model()])=>({purpose,vector,defense:'off',generatedAt:'2026-11-11T05:01:00Z',models:rows});
 function app(fetcher=()=>{throw Error('Unexpected request');}){
-  const requests=[],timers=new Map(),downloads=[],toasts=[],performanceOpens=[],elements=new Map();let nextTimer=0;
+  const reports=[],requests=[],timers=new Map(),downloads=[],toasts=[],performanceOpens=[],elements=new Map();let nextTimer=0;
   function element(selector){if(!elements.has(selector))elements.set(selector,{innerHTML:'',listeners:{},disabled:false,addEventListener(name,fn){this.listeners[name]=fn;},scrollIntoView(){this.scrolled=true;}});return elements.get(selector);}
-  const context=vm.createContext({defenseHistory,recordedDefenseLabel,categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,AbortController,
+  const context=vm.createContext({reports,mountAttackReport:(root,detail)=>reports.push(detail),experimentDefenseLabel,defenseHistory,recordedDefenseLabel,categoryTools,seeds:structuredClone({...seeds}),structuredClone,console,crypto:webcrypto,AbortController,
     setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,delay});return id;},clearTimeout:id=>timers.delete(id),
     fetch:(url,options)=>{requests.push({url,options});return fetcher(url,options);},
     localStorage:{getItem:()=>null,setItem(){}},
     document:{addEventListener(){},querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[]},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#results'},downloads,toasts,performanceOpens});
-  vm.runInContext(source+`\nshell=()=>{};renderRuntime=()=>{};toast=message=>toasts.push(message);download=(name,content,type)=>downloads.push({name,content,type});openPerformanceRun=async(mode,id)=>performanceOpens.push({mode,id});
-    globalThis.api={defenseView,applyDefenseHistoryPage,state,pages,actions,bindPage,databaseJobRows,refreshJobs,clearJobFilter,showModelHistory,refreshResultMetrics,changeResultPurpose,liveResultRows,liveResultsContent,resultBars,resultModelTable,resultModelOptions,resultCsvCell,exportCSV,openHistoryPerformance};`,context);
+  vm.runInContext(source+`\nmodal=()=>{};shell=()=>{};renderRuntime=()=>{};toast=message=>toasts.push(message);download=(name,content,type)=>downloads.push({name,content,type});openPerformanceRun=async(mode,id)=>performanceOpens.push({mode,id});
+    globalThis.api={allHistoryView,defenseView,applyDefenseHistoryPage,state,pages,actions,bindPage,databaseJobRows,refreshJobs,clearJobFilter,showModelHistory,refreshResultMetrics,changeResultPurpose,liveResultRows,liveResultsContent,resultBars,resultModelTable,resultModelOptions,resultCsvCell,exportCSV,openHistoryPerformance};`,context);
   Object.assign(context.api.state,{dbChecked:true,dbConfigured:true,dbReady:true,route:'results'});
-  return {...context.api,requests,timers,downloads,toasts,performanceOpens,element,location:context.location};
+  return {...context.api,reports,requests,timers,downloads,toasts,performanceOpens,element,location:context.location};
 }
 
  test('history is capped at five rows and uses server totals and clamped page metadata',async()=>{
-  const a=app(()=>response(history(3,{experiments:[job('last')]})));
+  const a=app(()=>response(history(3,{experiments:[job('last')]})));a.state.jobFilter={};
   a.state.jobs=Array.from({length:8},(_,i)=>job(String(i)));
   assert.equal((a.databaseJobRows().match(/data-action="db-detail"/g)||[]).length,5);
   await a.refreshJobs({page:99});
@@ -51,7 +51,7 @@ function app(fetcher=()=>{throw Error('Unexpected request');}){
  });
 
 test('late history responses cannot replace the newer selected page',async()=>{
-  const pending=[];const a=app(()=>new Promise(resolve=>pending.push(resolve)));
+  const pending=[];const a=app(()=>new Promise(resolve=>pending.push(resolve)));a.state.jobFilter={};
   const first=a.refreshJobs({page:1}),second=a.refreshJobs({page:2});
   pending[1](response(history(2)));await second;
   pending[0](response(history(1)));await first;
@@ -59,7 +59,7 @@ test('late history responses cannot replace the newer selected page',async()=>{
 });
 
 test('global active experiments keep polling even when the displayed page is completed',async()=>{
-  let count=0;const a=app(url=>response(url.startsWith('/api/results/models')?metrics():history(2,{activeCount:count++===0?1:0})));
+  let count=0;const a=app(url=>response(url.startsWith('/api/results/models')?metrics():history(2,{activeCount:count++===0?1:0})));a.state.jobFilter={};
   await a.refreshJobs({page:2});assert.equal(a.state.jobs[0].status,'completed');
   const scheduled=[...a.timers.values()];assert.equal(scheduled.length,1);assert.equal(scheduled[0].delay,5000);
   scheduled[0].callback();await new Promise(resolve=>setImmediate(resolve));
@@ -70,10 +70,10 @@ test('global active experiments keep polling even when the displayed page is com
 });
 
 test('history API failures and legacy unpaginated responses stay explicit',async()=>{
-  const a=app(()=>response({experiments:Array.from({length:7},(_,i)=>job(String(i)))}));
+  const a=app(()=>response({experiments:Array.from({length:7},(_,i)=>job(String(i)))}));a.state.jobFilter={};
   await a.refreshJobs();assert.match(a.state.jobError,/페이지 정보/);assert.equal(a.state.jobs.length,0);
   assert.match(a.databaseJobRows(),/role="alert"/);assert.equal(a.timers.size,0);
-  const b=app(()=>response({error:{message:'연결을 확인하세요.'}},503));await b.refreshJobs();
+  const b=app(()=>response({error:{message:'연결을 확인하세요.'}},503));b.state.jobFilter={};await b.refreshJobs();
   assert.match(b.databaseJobRows(),/연결을 확인하세요/);
 });
 
@@ -86,7 +86,7 @@ test('model and experiment names are escaped and dates use the Korean display zo
 });
 
 test('live result filters request only their chosen purpose and path and ignore late responses',async()=>{
-  const pending=[];const a=app(()=>new Promise(resolve=>pending.push(resolve)));
+  const pending=[];const a=app(()=>new Promise(resolve=>pending.push(resolve)));a.state.jobFilter={};
   a.state.resultReport.vector='direct';const old=a.refreshResultMetrics();
   a.changeResultPurpose('performance');const fresh=a.refreshResultMetrics();
   assert.equal(a.requests[0].url,'/api/results/models?purpose=attack&vector=direct');
@@ -136,11 +136,11 @@ test('CSV exports only displayed live models, preserves missing fields, and neut
 });
 
 test('model history uses chosen model and experiment filters then can return to all history',async()=>{
-  const a=app(()=>response(history()));a.state.resultReport.data=metrics('attack','indirect',[model('a & b')]);a.state.resultReport.vector='indirect';
+  const a=app(url=>response(url.includes('pageSize=100')?{experiments:[job('one')],page:1,pageSize:100,total:1,totalPages:1,activeCount:0}:history()));a.state.resultReport.data=metrics('attack','indirect',[model('a & b')]);a.state.resultReport.vector='indirect';
   await a.showModelHistory('a & b','baze');
   const url=new URL(a.requests[0].url,'https://example.test');
   assert.equal(url.searchParams.get('model'),'a & b');assert.equal(url.searchParams.get('purpose'),'attack');assert.equal(url.searchParams.get('vector'),'indirect');
-  await a.clearJobFilter();assert.equal(a.state.jobFilter,null);assert.equal(a.requests.at(-1).url,'/api/experiments?page=1&pageSize=5');
+  await a.clearJobFilter();assert.equal(a.state.jobFilter,null);assert.equal(a.requests.at(-1).url,'/api/experiments?page=1&pageSize=100');assert.equal(a.state.jobError,'');
 });
 
 test('performance history opens its existing single or comparison result screen',async()=>{
@@ -220,15 +220,42 @@ test('selected defense is sent to model metrics without mixing OFF records',asyn
   assert.equal(a.requests[0].url,'/api/results/models?purpose=attack&vector=all&defense=both');assert.equal(a.state.resultReport.data.defense,'both');
 });
 
-test('defense history flattens existing GET details and keeps OFF pagination separate',async()=>{
+test('defense history groups existing GET details and keeps OFF pagination separate',async()=>{
  const detail={experiment:{id:'on',purpose:'attack',execution_plan:{defense:'filter'},created_at:'2026-11-16'},runs:[{id:'r1',security_gateway_enabled:true,expected_label:'attack',status:'blocked',input_snapshot:{defenseMode:'filter',attackScenario:{key:'s',name:'저장된 시나리오명',vector:'direct'}},evaluations:[{metric:'attack_success',judge_type:'rule',decision_status:'determinate',boolean_value:false}]}]};
  const a=app(url=>response(url==='/api/experiments/on'?detail:url.includes('pageSize=100')?{experiments:[job('on',{total:1,defense_enabled:true})],page:1,pageSize:100,total:1,totalPages:1}:history()));
  await a.actions['history-group']({dataset:{group:'defense'}});
  assert.equal(a.requests[0].url,'/api/experiments?page=1&pageSize=100&experimentGroup=defense');assert.equal(a.requests[1].url,'/api/experiments/on');
- const html=a.databaseJobRows();assert.match(html,/저장된 시나리오명/);assert.match(html,/입력 필터링/);assert.match(html,/직접/);assert.match(html,/전체 1건/);assert.doesNotMatch(html,/실험 on|카테고리별/);
+ const html=a.databaseJobRows();assert.match(html,/실험 on/);assert.match(html,/입력 필터링/);assert.match(html,/전체 1개/);assert.doesNotMatch(html,/defense-run-detail/);assert.match(html,/data-action="db-detail" data-id="on"/);
  const before=a.requests.length;await a.refreshJobs({page:2});assert.equal(a.requests.length,before);assert.equal(a.state.jobPage,1);
- a.defenseView.filters.query='존재하지 않는 검색어';a.applyDefenseHistoryPage(1);assert.match(a.databaseJobRows(),/전체 0건/);
+ a.defenseView.filters.query='존재하지 않는 검색어';a.applyDefenseHistoryPage(1);assert.match(a.databaseJobRows(),/전체 0개/);
  await a.actions['history-group']({dataset:{group:'attack'}});assert.match(a.requests.at(-1).url,/experimentGroup=attack/);
  await a.actions['history-group']({dataset:{group:'all'}});assert.doesNotMatch(a.requests.at(-1).url,/experimentGroup/);
  assert.ok(a.requests.every(r=>r.options.method==='GET'));
+});
+
+ test('all history keeps each ON experiment together alongside OFF normal and performance rows',async()=>{
+ const on=job('on',{name:'방어 묶음 실험',defense_enabled:true,total:2});const off=job('off',{name:'기존 공격 실험',defense_enabled:false});
+ const detail={experiment:{id:'on',purpose:'attack',execution_plan:{defense:'filter'}},runs:['r1','r2'].map((id,i)=>({id,expected_label:'attack',security_gateway_enabled:true,status:'blocked',created_at:'2026-11-16',requested_model:'model-a',input_snapshot:{defenseMode:'filter',attackScenario:{key:'s'+i,name:'시나리오 '+i,vector:i?'indirect':'direct'}},evaluations:[]}))};
+ const parents=[on,off,job('normal',{purpose:'normal'}),job('performance',{purpose:'performance'})];
+ const a=app(url=>response(url==='/api/experiments/on'?detail:{experiments:parents,page:1,pageSize:100,total:4,totalPages:1,activeCount:0}));
+ await a.refreshJobs();assert.equal(a.state.jobTotal,4);assert.equal(a.state.jobError,'');
+ const html=a.databaseJobRows();assert.match(html,/방어 묶음 실험/);assert.match(html,/입력 필터링/);assert.match(html,/2 \/ 2/);assert.doesNotMatch(html,/defense-run-detail/);assert.match(html,/기존 공격 실험/);assert.match(html,/정상 응답 확인/);assert.match(html,/성능 평가/);assert.equal((html.match(/data-action="db-detail"/g)||[]).length,4);
+ a.element('#modal');a.element('#attack-report-root');a.element('#db-export');
+ await a.actions['db-detail']({dataset:{id:'on'}});assert.equal(a.reports[0].experiment.id,'on');assert.equal(a.reports[0].runs.length,2);assert.equal(a.requests.at(-1).url,'/api/experiments/on');
+
+ const calls=a.requests.length;await a.refreshJobs({page:2});assert.equal(a.requests.length,calls);assert.equal(a.state.jobPage,1);assert.ok(a.requests.every(x=>x.options.method==='GET'));
+ });
+
+
+test('defense filtering keeps full batch progress and detail export; cached pagination keeps active polling',async()=>{
+ const runs=Array.from({length:7},(_,i)=>({id:'r'+i,expected_label:'attack',security_gateway_enabled:true,status:i===6?'running':'blocked',requested_model:'model-a',input_snapshot:{defenseMode:i?'separate':'filter',attackScenario:{key:'s'+i,name:'시나리오 '+i,vector:'direct'}},evaluations:[]}));
+ const detail={experiment:{id:'batch',name:'묶음 실험',purpose:'attack',status:'running'},runs};
+ const a=app(url=>response(url==='/api/experiments/batch'?detail:{experiments:[job('batch',{total:7,finished:6,status:'running',defense_enabled:true})],page:1,pageSize:100,total:1,totalPages:1}));
+ await a.actions['history-group']({dataset:{group:'defense'}});
+ a.defenseView.filters.mode='filter';a.applyDefenseHistoryPage(1);const html=a.databaseJobRows();
+ assert.equal(a.state.jobTotal,1);assert.match(html,/6 \/ 7/);assert.equal((html.match(/data-action="db-detail"/g)||[]).length,1);
+ await a.refreshJobs({page:2});assert.equal(a.timers.size,1);assert.equal(a.state.jobPage,1);
+ a.element('#modal');a.element('#attack-report-root');a.element('#db-export');
+ await a.actions['db-detail']({dataset:{id:'batch'}});assert.equal(a.reports.at(-1).runs.length,7);
+ a.element('#db-export').listeners.click();assert.equal(JSON.parse(a.downloads[0].content).runs.length,7);
 });
