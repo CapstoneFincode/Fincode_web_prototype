@@ -20,3 +20,11 @@ backend/tests/
 !datasets/ground_truth_set/v1/
 !datasets/ground_truth_set/v1/emails.json
 !datasets/ground_truth_set/v1/manifest.json
+
+!release/
+!release/Dockerfile
+!release/public_site.py
+!release/history.py
+!release/matched.py
+!release/web/
+!release/web/**

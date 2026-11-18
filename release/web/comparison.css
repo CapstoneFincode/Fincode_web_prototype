@@ -1,0 +1,21 @@
+.saved-comparison .saved-controls,.saved-comparison .saved-output{padding:clamp(16px,2.2vw,28px);margin-bottom:20px}
+.saved-comparison .saved-field{display:grid;gap:7px;min-width:0;font-size:12px;font-weight:600;color:#53687f}
+.saved-comparison .saved-field[hidden],.saved-comparison button[hidden]{display:none}
+.saved-comparison .saved-field select{box-sizing:border-box;width:100%;min-width:0;padding:10px 32px 10px 12px;border:1px solid #cbd7e6;border-radius:8px;background-color:white;font:inherit;color:#263a53}
+.saved-comparison .saved-controls>.saved-field{max-width:320px}
+.saved-comparison .saved-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:16px;margin:22px 0 18px}
+.saved-comparison .saved-card{min-width:0;margin:0;border:1px solid #dbe4ee;background:#f8faff;border-radius:10px;padding:13px 16px 16px}
+.saved-comparison .saved-card legend{padding:0 5px;font-size:14px;font-weight:700;color:#344f78}
+.saved-comparison .saved-card .saved-field{margin-top:10px}
+.saved-comparison .saved-card button:not([hidden]){margin:9px 8px 0 0}
+.saved-comparison .saved-status,.saved-comparison .saved-note,.saved-comparison .saved-empty{font-size:13px;line-height:1.65;color:#526880}
+.saved-comparison .saved-status:not(:empty),.saved-comparison .saved-note{margin:10px 0}
+.saved-comparison .saved-empty{padding:18px 0}
+.saved-comparison .saved-chart{display:grid;gap:12px;margin:20px 0;padding:16px;background:#f7f9fd;border-radius:8px}
+.saved-comparison .saved-series-name,.saved-comparison .saved-meter-row{font-size:12px;color:#394f6e;overflow-wrap:anywhere}
+.saved-comparison .saved-meter-row{display:flex;align-items:center;gap:12px;margin-top:5px}
+.saved-comparison meter{width:min(28rem,80%);height:13px;accent-color:#3367c5}
+.saved-comparison meter::-webkit-meter-optimum-value{background:#3367c5}
+.saved-comparison meter::-moz-meter-bar{background:#3367c5}
+.saved-comparison .saved-table-wrap{overflow-x:auto}
+.saved-comparison .saved-table-wrap th,.saved-comparison .saved-table-wrap td{text-align:left;white-space:normal;min-width:90px;overflow-wrap:anywhere}
