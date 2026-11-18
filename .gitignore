@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.tar.gz
+
+dist/
+.next/
+.wrangler/
+.sites-runtime/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.dev.vars*

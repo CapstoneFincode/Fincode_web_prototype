@@ -1,0 +1,99 @@
+{
+  "date": "2026-11-11",
+  "feature": "Transient email summaries and three experiment result types",
+  "githubCommit": "a4077cd5d6f3846b489bf312ce9c983b033a6e4b",
+  "backend": {
+    "deploymentId": "6e5f165b-0902-4faa-a6c1-d349d56a2974",
+    "status": "SUCCESS",
+    "url": "https://fincode-api-production.up.railway.app"
+  },
+  "frontend": {
+    "version": 24,
+    "sourceCommit": "3e6a4c4f5c390ab8568f8669196d625e06411994",
+    "deploymentId": "appgdep_6af412f178548191ae362d45591e971e",
+    "status": "succeeded",
+    "deployedAt": "2026-11-11T07:02:24.257807Z",
+    "url": "https://fincode-security-lab.xogus090721.chatgpt.site",
+    "mainTrackedFilesMatched": 162,
+    "environmentRevision": 2,
+    "accessScopeChanged": false
+  },
+  "validation": {
+    "javascript": {
+      "passed": 177,
+      "skipped": 0
+    },
+    "python": {
+      "passed": 184,
+      "skipped": 0,
+      "database": "Disposable PostgreSQL",
+      "hwpFixture": "Private local fixture; not uploaded or committed"
+    },
+    "productionBuild": "passed",
+    "browser": "Isolated synthetic data and mocked summaries: tabs, filters, five-item pagination, transient result and reset on reload"
+  },
+  "baseline": {
+    "datasets": {
+      "normal": 105,
+      "attacks": 60,
+      "categories": 7
+    },
+    "experiments": 143,
+    "legacySummaryExperiments": 105,
+    "activeExperiments": 0
+  },
+  "productionReadOnlyVerification": {
+    "datasetsPreserved": true,
+    "mismatches": [],
+    "existingVisibleHistoryCompared": 38,
+    "legacySummaryDetailSamplesPreserved": true,
+    "legacySummarySamplesCompared": 3,
+    "performanceHistoryPreserved": true,
+    "pagination": {
+      "total": 39,
+      "pages": 8,
+      "pageSize": 5,
+      "uniqueIds": true
+    },
+    "summaryExcluded": true,
+    "summaryQueriesRejected": {
+      "/api/experiments?page=1&pageSize=5&purpose=summary": 400,
+      "/api/results/models?purpose=summary": 400
+    },
+    "metrics": {
+      "attack": {
+        "models": 6,
+        "runs": 265
+      },
+      "normal": {
+        "models": 1,
+        "runs": 1
+      },
+      "performance": {
+        "models": 1,
+        "runs": 100
+      }
+    },
+    "assetsMatch": {
+      "app.js": true,
+      "style.css": true,
+      "attack-results.js": true,
+      "attack-results.css": true
+    },
+    "attachmentsEnabled": true,
+    "defensesEnabled": false,
+    "productionWrites": false,
+    "paidModelCalls": 0
+  },
+  "scope": {
+    "compared": "Existing active dataset API fields, non-summary experiment list metadata, three legacy summary detail samples, and the recent performance list API response",
+    "preservationIsFullDatabaseBackup": false,
+    "allRunDetailsCompared": false,
+    "attachmentOriginalsCompared": false,
+    "productionPaidSummaryExecuted": false,
+    "loggedInProductionBrowserQa": false,
+    "newMigration": false,
+    "optimizationIncluded": false,
+    "concurrentAdditionalHistoryRows": 1
+  }
+}

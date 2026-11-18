@@ -1,0 +1,81 @@
+{
+  "datasetsPreserved": true,
+  "mismatches": [],
+  "existingExperimentsCompared": 100,
+  "performanceHistoryPreserved": true,
+  "pagination": {
+    "total": 130,
+    "pages": 26,
+    "rowsChecked": 130,
+    "maxPageSize": 5,
+    "uniqueIds": true
+  },
+  "models": {
+    "attack": {
+      "models": 6,
+      "totalRuns": 248
+    },
+    "summary": {
+      "models": 6,
+      "totalRuns": 94
+    },
+    "normal": {
+      "models": 1,
+      "totalRuns": 1
+    },
+    "performance": {
+      "models": 1,
+      "totalRuns": 100
+    }
+  },
+  "vectorTotals": {
+    "direct": 240,
+    "indirect": 8
+  },
+  "metricDenominatorsVerified": true,
+  "missingValueRulesVerified": true,
+  "vectorPartitionVerified": true,
+  "modelHistoryFilterVerified": true,
+  "productionAssetsMatch": {
+    "app.js": true,
+    "style.css": true,
+    "attack-results.js": true,
+    "attack-results.css": true
+  },
+  "attachmentsEnabled": true,
+  "defensesEnabled": false,
+  "date": "2026-11-11",
+  "featureCommit": "7bba550d639951674769bbe4fd318fa370879efa",
+  "backendDeployment": {
+    "id": "b14bfcce-87d6-4570-96ea-db72bf66bcdc",
+    "status": "SUCCESS",
+    "stagedChanges": false
+  },
+  "siteDeployment": {
+    "id": "appgdep_6af409d52bd8819181bf69efa2b0ef9e",
+    "status": "succeeded",
+    "version": 22,
+    "sourceCommit": "14851bf0e2365f0394bf49798d704c35b27721b5",
+    "url": "https://fincode-security-lab.xogus090721.chatgpt.site",
+    "environmentRevision": 2,
+    "access": "owner-private, unchanged"
+  },
+  "githubAndSiteTrackedFilesMatch": 159,
+  "baselineDatasetCounts": {
+    "normal": 105,
+    "attacks": 51,
+    "categories": 7
+  },
+  "preservationScope": "All existing fields of baseline dataset rows, captured latest 100 experiment list rows, performance history. Full run/output/input bodies were not reread or compared. Not a physical database backup.",
+  "validation": {
+    "javascriptPassed": 165,
+    "pythonPassed": 173,
+    "skipped": 0,
+    "frontendBuild": "passed",
+    "localBrowser": "Synthetic fixture: 5/5/3 history pages, empty path filter, purpose/quality/model filters, model history link",
+    "production": "Authenticated read-only API and served asset comparison; no logged-in browser click validation"
+  },
+  "newProductionModelCalls": 0,
+  "verificationProductionWrites": 0,
+  "schemaMigrationsAdded": false
+}

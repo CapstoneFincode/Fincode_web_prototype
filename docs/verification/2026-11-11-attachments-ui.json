@@ -1,0 +1,89 @@
+{
+  "date": "2026-11-11",
+  "branch": "UI",
+  "baseMainCommit": "c4b0bd26682743ec26956e165ab787e84ae88e96",
+  "initialMainCommit": "afe728e4e49dc42281ae30f82fc44dcf88af93b0",
+  "migration": "007_attachments.sql",
+  "tests": {
+    "javascript": {
+      "passed": 149,
+      "failed": 0,
+      "skipped": 0
+    },
+    "python": {
+      "passed": 166,
+      "failed": 0,
+      "skipped": 0,
+      "database": "native PostgreSQL 16.2",
+      "python": "3.12.14",
+      "realHwpFixture": true
+    },
+    "productionFrontendBuild": "passed",
+    "builtAssetsMatchSource": true,
+    "dependencyCheck": "passed",
+    "diffCheck": "passed"
+  },
+  "browser": {
+    "summaryAttachmentOnly": "passed",
+    "uploadPreviewAndMetadata": "passed",
+    "indirectScenarioCreate": "passed",
+    "indirectAttachmentOnlyExecution": "passed",
+    "actualInputAndResultDisplay": "passed",
+    "model": "mock; no paid model API calls"
+  },
+  "manualExtraction": {
+    "hwpDocuments": 2,
+    "hwpBodyAndTables": "passed",
+    "pngJpegKoreanEnglish": "passed",
+    "scannedPdf": "OCR pipeline passed; one observed recognition error",
+    "protectedHwp": "rejected explicitly"
+  },
+  "fixedIssues": [
+    "Default hwp5txt table omission avoided through XML traversal.",
+    "Explicit six dependency in fresh Python environment.",
+    "Unicode codepoint and complete input length counts aligned between browser and server.",
+    "Pending upload cancellation cannot revive removed files or release the processing slot early.",
+    "Normal email experiments reject ad-hoc attachments.",
+    "Arbitrarily long Content-Length headers return bounded 413 responses instead of integer-conversion 500 errors.",
+    "Email body display and 30000-character validation use Unicode codepoints; over-limit paste is preserved and execution blocked."
+  ],
+  "unverified": [
+    "Docker image build: Docker unavailable in executor.",
+    "Live private S3 bucket connectivity: no bucket provisioned in this UI-only phase.",
+    "Paid BAZE model inference with new attachment inputs."
+  ],
+  "productionDataWrites": 0,
+  "productionDeployments": 0,
+  "mainBranchWrites": 0,
+  "recheck": {
+    "baseFeatureCommit": "db7629a0cfa920d407699f724f6aaa9bdb85c99d",
+    "javascriptPassed": 149,
+    "pythonPassed": 166,
+    "failed": 0,
+    "skipped": 0,
+    "productionFrontendBuild": "passed",
+    "builtAssetsMatchSource": true,
+    "realHwpDocuments": 2,
+    "realOcrFormats": [
+      "png",
+      "jpeg",
+      "scanned-pdf"
+    ],
+    "paidModelCalls": 0,
+    "populatedMigrationUpgrade": {
+      "from": "001-006",
+      "to": "007",
+      "repeatedApply": "passed",
+      "existingTablesCompared": 13,
+      "existingRowsCompared": 17,
+      "existingFieldsPreserved": true,
+      "legacyAttachmentStates": [
+        "succeeded",
+        "pending",
+        "failed"
+      ],
+      "invalidConstraintCasesRejected": 7,
+      "health": "ready"
+    }
+  }
+}

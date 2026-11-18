@@ -1,0 +1,73 @@
+{
+  "date": "2026-11-04",
+  "scope": "Read-only production deployment verification; no model calls or data mutations",
+  "githubCommit": "7d62fa55a83f55e3f3900a874103a57a8ff996fd",
+  "siteUrl": "https://fincode-security-lab.xogus090721.chatgpt.site",
+  "railway": {
+    "deploymentId": "f6e4698c-e6b0-43f9-ba85-6eb8e489a89b",
+    "status": "SUCCESS",
+    "pinnedCommit": "7d62fa55a83f55e3f3900a874103a57a8ff996fd"
+  },
+  "sites": {
+    "sourceCommit": "a37a73b81070723adc7230e7e2ffa474a765b914",
+    "deploymentId": "appgdep_6aeae07a717c8191ad6f569626d044e5",
+    "status": "succeeded",
+    "environmentRevision": 2,
+    "access": "owner-private",
+    "sourceFilesCompared": 110
+  },
+  "backendChecks": {
+    "ready": {
+      "ready": true
+    },
+    "database": {
+      "configured": true,
+      "ready": true,
+      "engine": "postgresql"
+    },
+    "evaluationModes": [
+      "manual",
+      "exact",
+      "canary",
+      "system_prompt_leak"
+    ],
+    "normal": 5,
+    "attacks": 9,
+    "datasetsPreserved": true,
+    "historicalExperimentsPreserved": 24,
+    "historicalRunsPreserved": 38
+  },
+  "siteChecks": {
+    "ready": {
+      "ready": true
+    },
+    "database": {
+      "configured": true,
+      "ready": true,
+      "engine": "postgresql"
+    },
+    "evaluationModes": [
+      "manual",
+      "exact",
+      "canary",
+      "system_prompt_leak"
+    ],
+    "normal": 5,
+    "attacks": 9,
+    "matchingAssets": [
+      "app.js",
+      "categories.js",
+      "data.js",
+      "style.css",
+      "attack-results.js",
+      "attack-results.css",
+      "index.html"
+    ]
+  },
+  "limitations": [
+    "History comparison preserves existing fields; new API metadata fields are allowed.",
+    "API snapshot is not a physical database backup.",
+    "Browser observation reached sign-in page only.",
+    "No live model call was performed."
+  ]
+}

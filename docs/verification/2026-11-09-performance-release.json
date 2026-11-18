@@ -1,0 +1,121 @@
+{
+  "verifiedAt": "2026-11-09T06:23:38.913415+00:00",
+  "status": "verified",
+  "backendReady": {
+    "ready": true
+  },
+  "database": {
+    "configured": true,
+    "ready": true,
+    "engine": "postgresql"
+  },
+  "dataset": {
+    "id": "ground_truth_set/v1",
+    "total": 100,
+    "available": 100,
+    "reviewedLabels": 100,
+    "reviewedReferences": 100
+  },
+  "normal": 105,
+  "attacks": 19,
+  "categories": 7,
+  "historicalExperimentsPreserved": 87,
+  "historicalRunsPreserved": 140,
+  "dataPreserved": true,
+  "preservationMethod": "Existing API fields compared; added metadata allowed",
+  "historyCheckReused": true,
+  "htmlHttpCheck": {
+    "requestedPath": "/index.html",
+    "status": 307,
+    "redirectPath": "/",
+    "canonicalPath": "/",
+    "canonicalResponseStatus": 200,
+    "canonicalContentMatches": true
+  },
+  "performanceHistoryCount": 0,
+  "paidModelCallsDuringVerification": 0,
+  "assets": [
+    {
+      "name": "app.js",
+      "sha256": "795bfd0775676b7041aee14933989d02a9b00626e80ac6b5cd6440646df5d46b",
+      "matches": true
+    },
+    {
+      "name": "style.css",
+      "sha256": "5044168979715d76dcb8439f66e99aeae34b99bf7778c027a5ba1f77e2965409",
+      "matches": true
+    },
+    {
+      "name": "categories.js",
+      "sha256": "897b2909735f1831951e22b6e7923652459dda4f7228aed821a02c8f2d4ad31e",
+      "matches": true
+    },
+    {
+      "name": "data.js",
+      "sha256": "a9e226e1ab4d7dd5223243ac55b6a831ec458435814cc2b954a5084d5479b6d3",
+      "matches": true
+    },
+    {
+      "name": "attack-results.js",
+      "sha256": "9d7fc2c42fef40e571ed2fcff2e62b7ea49b1176eeac2a5ff0da7e9a65306316",
+      "matches": true
+    },
+    {
+      "name": "attack-results.css",
+      "sha256": "52cd7a5274918ed76c0787a5cb9d9f5d7f52ed2845698cf8fa0c3e58df7cb144",
+      "matches": true
+    },
+    {
+      "name": "index.html",
+      "servedAt": "/",
+      "matches": true,
+      "sha256": "6cd6de478032a0c92e370e68e2ec5f1ea33f772b14d2eef3b2ee2c8cc942cd79"
+    }
+  ],
+  "railway": {
+    "projectId": "59ec5ab2-d868-4807-8a67-38608120960f",
+    "serviceId": "fc696122-c41d-4923-b3b9-54a6873ad047",
+    "environmentId": "f018ba7f-23ca-4f37-98a5-70a0e44ab38d",
+    "commitSha": "5ed887f666e03054049632f41e10aed99df7f45e",
+    "deploymentId": "abe2d4e4-e2de-417b-83ea-faf039684984",
+    "status": "SUCCESS",
+    "stagedChanges": false,
+    "migrations": [
+      "005_performance_runtime.sql"
+    ]
+  },
+  "site": {
+    "projectId": "appgprj_6acc6daad91c8191931bddebb0cc597a",
+    "commitSha": "9d95a09b32bdeabc39e369fd1d9f24b8666d2a00",
+    "deploymentId": "appgdep_6af16603a8f08191ac3bf15bc9cd7b3c",
+    "versionId": "appgprj_6acc6daad91c8191931bddebb0cc597a~appgver_80eece99c28c81918472b165f6e41794",
+    "status": "succeeded",
+    "envSetRevision": 2,
+    "url": "https://fincode-security-lab.xogus090721.chatgpt.site",
+    "audience": "owner-only"
+  },
+  "approval": {
+    "report": "2026-11-09-ground-truth-approval.json",
+    "labelsReviewed": 100,
+    "referencesReviewed": 100,
+    "emailVersionsPreserved": 2,
+    "groundTruthVersionsPreserved": 1,
+    "contentPreserved": true,
+    "basis": "explicit-user-request; not a claim of individual human inspection"
+  },
+  "firstBuildFailure": {
+    "deploymentId": "79179a47-a3f4-4792-9e5e-16ca19801f53",
+    "reason": "Docker build allowlist excluded the v1 dataset; corrected with narrowly scoped includes",
+    "databaseMigrationStarted": false
+  },
+  "validation": {
+    "javascriptTestsPassed": 125,
+    "backendTestsCovered": 120,
+    "scorerAndPerformanceRerunPassed": 40,
+    "importAndReviewTestsPassed": 23,
+    "frontendBuild": "passed",
+    "dockerBuild": "passed after build-context fix",
+    "browserClickAndVisualQa": "not completed",
+    "liveModelEvaluation": "not executed"
+  }
+}

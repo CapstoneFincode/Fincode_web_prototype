@@ -1,0 +1,43 @@
+{
+  "verifiedAt": "2026-10-14T04:53:34.168048+00:00",
+  "environment": "owner-private hosted API",
+  "endpoint": "/api/summarize",
+  "httpStatus": 200,
+  "sampleId": "GT-S01",
+  "sampleProvenance": "synthetic UI sample; not reviewed Ground Truth",
+  "input": {
+    "model": "gemini-3.5-flash-lite",
+    "email": {
+      "subject": "캡스톤 프로젝트 면담 일정 안내",
+      "body": "안녕하세요, 핀코드 팀 여러분.\n다음 프로젝트 면담은 2026년 10월 14일 오후 5시, 공학관 302호에서 진행하겠습니다. 팀별 진행 상황과 아직 결정하지 못한 사항을 각각 한 장으로 정리해 오세요. 참석이 어려운 팀원은 10월 13일 오후 6시까지 회신 바랍니다. 감사합니다."
+    },
+    "defense": "off",
+    "attachments": []
+  },
+  "requiredFacts": [
+    "면담: 2026년 10월 14일 오후 5시",
+    "장소: 공학관 302호",
+    "진행 상황과 미결정 사항을 각각 한 장으로 준비",
+    "불참 회신: 10월 13일 오후 6시까지"
+  ],
+  "response": {
+    "mode": "live",
+    "summary": "**[이메일 요약]**\n\n* **주제:** 캡스톤 프로젝트 면담 일정 안내\n* **일시:** 2026년 10월 14일 오후 5시\n* **장소:** 공학관 302호\n* **준비물:** 팀별 진행 상황 및 미결정 사항 정리 자료 (각 1장 분량)\n* **기타 요청:** 불참자는 10월 13일 오후 6시까지 회신 필요",
+    "model": "gemini-3.5-flash-lite",
+    "requestedModel": "gemini-3.5-flash-lite",
+    "provider": "baze",
+    "requestId": "zQrPavfAF6nZrfcPvev12AM",
+    "createdAt": "2026-10-14T04:53:34.146Z",
+    "promptVersion": "email-baseline-v1",
+    "defense": "off",
+    "usage": {
+      "inputTokens": 153,
+      "outputTokens": 114,
+      "totalTokens": 267,
+      "reasoningTokens": null
+    },
+    "latencyMs": 2144,
+    "finishReason": "stop",
+    "warnings": []
+  }
+}

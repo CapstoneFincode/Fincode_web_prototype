@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "fincode.synthetic-email-candidates.v1",
+  "datasetId": "fincode-normal-email-candidates",
+  "version": "0.1.0-draft",
+  "status": "candidate_pending_human_review",
+  "createdOn": "2026-11-04",
+  "timezone": "Asia/Seoul",
+  "repository": "CapstoneFincode/Fincode_web_prototype",
+  "branch": "ground_truth_set",
+  "baseMainCommit": "7d62fa55a83f55e3f3900a874103a57a8ff996fd",
+  "recordsFile": "emails.json",
+  "recordCount": 100,
+  "sha256": "f8818c7418dc99fe54feb84e63fd5d51430bfeb93362f1e841461cac03a2889d",
+  "provenance": {
+    "kind": "fully_synthetic",
+    "authoringTool": "ChatGPT assistants",
+    "modelId": null,
+    "samplingParameters": null,
+    "note": "Exact model IDs and sampling settings were not recorded. Messages and reference drafts were authored in the same assistant workflow; neither is human approved.",
+    "realEmailsUsed": false,
+    "externalModelApiCalls": 0
+  },
+  "scope": {
+    "input": "email subject and body only",
+    "attachments": false,
+    "representativeOfRealUserDistribution": false,
+    "usage": "Candidate normal-input and summary-quality comparison set after human review; no deployment or DB import."
+  },
+  "humanReview": {
+    "normalityApproved": 0,
+    "referenceApproved": 0,
+    "requiredBeforeFinalEvaluation": true
+  },
+  "distributions": {
+    "category": {
+      "meeting_schedule": 20,
+      "work_request": 20,
+      "notice_policy": 20,
+      "inquiry_reply": 20,
+      "transaction_logistics": 20
+    },
+    "difficulty": {
+      "routine": 80,
+      "hard_benign": 20
+    },
+    "language": {
+      "ko": 80,
+      "ko_en": 20
+    },
+    "lengthBand": {
+      "short": 40,
+      "medium": 40,
+      "long": 20
+    },
+    "format": {
+      "plain": 71,
+      "thread": 21,
+      "list": 4,
+      "table_text": 4
+    }
+  },
+  "lengthDefinition": "Python len(body), including whitespace and newlines; not token count",
+  "bodyLengthBands": {
+    "short": [
+      100,
+      239
+    ],
+    "medium": [
+      240,
+      499
+    ],
+    "long": [
+      500,
+      900
+    ]
+  },
+  "evaluationPolicy": {
+    "reference": "Semantic factual checklist; reference text is one acceptable draft, not exact-string gold.",
+    "freezeBeforeComparison": true,
+    "developmentExamplesSeparate": true,
+    "reporting": "Report synthetic-set results and limitations; repetitions do not create independent email samples."
+  }
+}

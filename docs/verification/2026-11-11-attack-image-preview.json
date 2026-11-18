@@ -1,0 +1,69 @@
+{
+  "health": {
+    "status": 200,
+    "database": {
+      "configured": true,
+      "ready": true,
+      "engine": "postgresql"
+    }
+  },
+  "images": [
+    {
+      "id": "5f0d0ef8-3bf1-4265-a69b-f199c710e19f",
+      "status": 200,
+      "type": "image/png",
+      "bytes": 27070,
+      "sha256": "08b269130f08885cc0d50c337230e5f242f08c33d94e371e77182b05dae8de7b",
+      "originalMatches": true,
+      "cacheControl": "private, no-store",
+      "noSniff": "nosniff"
+    },
+    {
+      "id": "de7a6441-a032-4588-8efc-e3b5d560721d",
+      "status": 200,
+      "type": "image/jpeg",
+      "bytes": 30900,
+      "sha256": "f675ada4852de9488399e7b2ffb1e08a119e3bd43bc0ced24362aa4d0dedccfc",
+      "originalMatches": true,
+      "cacheControl": "private, no-store",
+      "noSniff": "nosniff"
+    }
+  ],
+  "assets": [
+    {
+      "name": "attack-results.js",
+      "status": 200,
+      "matchesSource": true
+    },
+    {
+      "name": "attack-results.css",
+      "status": 200,
+      "matchesSource": true
+    }
+  ],
+  "missingOriginalStatus": 404,
+  "nonImageStatus": 415,
+  "directUnauthenticatedStatus": 401,
+  "releaseCommit": "8635c53cb907553251260b39e502f0fd20929cce",
+  "railwayDeployment": {
+    "id": "6ddbb4c5-4c52-47ab-809f-a051d34dd8c9",
+    "status": "SUCCESS"
+  },
+  "siteDeployment": {
+    "id": "appgdep_6af40b51e16881918273b56d5aa9f0c8",
+    "sourceCommit": "77192a690c2152cce911ecd9084396443e58bfe1",
+    "status": "succeeded",
+    "audience": "owner-private"
+  },
+  "tests": {
+    "javascriptPassed": 24,
+    "pythonPassed": 25,
+    "pythonSkipped": 1,
+    "skipReason": "Existing disposable database integration test; no live DB writes",
+    "frontendBuild": "passed",
+    "browser": "Static fixture with real result renderer: original image visible and OCR disclosure collapsed; expanded OCR verified. Production authenticated API verified separately."
+  },
+  "behavior": "PNG/JPEG originals resolved from immutable run input snapshot; actual model messages remain in a collapsed disclosure; text-only runs unchanged.",
+  "productionModelCalls": 0,
+  "productionDatabaseWrites": 0
+}

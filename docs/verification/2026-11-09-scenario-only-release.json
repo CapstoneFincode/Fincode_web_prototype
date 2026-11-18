@@ -1,0 +1,52 @@
+{
+  "ready": {
+    "ready": true
+  },
+  "database": {
+    "configured": true,
+    "ready": true,
+    "engine": "postgresql"
+  },
+  "attackInputMode": "scenario-only-v1",
+  "evaluationModes": [
+    "manual",
+    "exact",
+    "canary",
+    "system_prompt_leak"
+  ],
+  "normal": 5,
+  "attacks": 11,
+  "datasetsPreserved": true,
+  "historicalExperimentsPreserved": 30,
+  "historicalRunsPreserved": 53,
+  "matchingAssets": [
+    "app.js",
+    "categories.js",
+    "data.js",
+    "style.css",
+    "attack-results.js",
+    "attack-results.css",
+    "index.html"
+  ],
+  "date": "2026-11-09",
+  "featureCommit": "543c3b6b22cb3bcf38de38ba6f0501eb85813d1c",
+  "railwayDeployment": "c3087990-2a10-433b-b286-73e0a6624934",
+  "railwayStatus": "SUCCESS",
+  "railwayStagedChanges": 0,
+  "siteSourceCommit": "5284b00aae7ff51aaac80372a8c5a433a2fba7d2",
+  "siteDeployment": "appgdep_6af14a9b35dc81918ef1e7bcde209fa0",
+  "siteStatus": "succeeded",
+  "siteVersion": "appgprj_6acc6daad91c8191931bddebb0cc597a~appgver_87ad2b7737c48191adc38b69a82ed90b",
+  "siteUrl": "https://fincode-security-lab.xogus090721.chatgpt.site",
+  "siteEnvRevision": 2,
+  "trackedSourceFilesMatched": 111,
+  "localChecks": {
+    "javascript": 93,
+    "python": 74,
+    "evaluatorParity": 166,
+    "build": "passed",
+    "browser": "local static workflow: attack selector hidden; normal selector restored; selected 4 scenario results rendered"
+  },
+  "realModelCalls": 0,
+  "productionDataWrites": 0
+}

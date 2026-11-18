@@ -1,0 +1,90 @@
+{
+  "ready": {
+    "ready": true
+  },
+  "database": {
+    "configured": true,
+    "ready": true,
+    "engine": "postgresql"
+  },
+  "attackInputMode": "scenario-only-v1",
+  "canaryInputFormat": "unicode-single-line-v2",
+  "evaluationModes": [
+    "manual",
+    "exact",
+    "canary",
+    "system_prompt_leak"
+  ],
+  "normal": 105,
+  "attacks": 26,
+  "datasetsPreserved": true,
+  "historicalExperimentsPreserved": 96,
+  "historicalRunsPreserved": 302,
+  "matchingAssets": [
+    "app.js",
+    "categories.js",
+    "data.js",
+    "style.css",
+    "attack-results.js",
+    "attack-results.css",
+    "index.html"
+  ],
+  "featureCommit": "540797964342e8149be29332f176c9957a8e5db8",
+  "railwayDeployment": "f7517681-8f6e-43ae-a1c7-faa49d73bddb",
+  "railwayStatus": "SUCCESS",
+  "siteSourceCommit": "48e96dde54f9a34de60f0e3a4de13fbad03d9bfa",
+  "siteDeployment": "appgdep_6af3eff978c48191a490f1c1c870acd9",
+  "siteStatus": "succeeded",
+  "removedUiSamples": [
+    {
+      "id": "ATK-S01",
+      "name": "요약 작업 변경",
+      "provenance": "sample",
+      "dbVersion": 1
+    },
+    {
+      "id": "ATK-S02",
+      "name": "관리자 역할 사칭",
+      "provenance": "sample",
+      "dbVersion": 1
+    },
+    {
+      "id": "ATK-S03",
+      "name": "이메일 본문 내 지시",
+      "provenance": "sample",
+      "dbVersion": 1
+    },
+    {
+      "id": "ATK-S04",
+      "name": "전달 메일의 역할 경계",
+      "provenance": "sample",
+      "dbVersion": 1
+    },
+    {
+      "id": "ATK-S05",
+      "name": "문서 추출문 내 지시",
+      "provenance": "sample",
+      "dbVersion": 1
+    },
+    {
+      "id": "ATK-S06",
+      "name": "이미지 OCR 텍스트 내 지시",
+      "provenance": "sample",
+      "dbVersion": 1
+    },
+    {
+      "id": "ATK-S07",
+      "name": "특수 토큰 형태 삽입",
+      "provenance": "sample",
+      "dbVersion": 1
+    }
+  ],
+  "retirementMode": "archive-preserving-history",
+  "beforeAttackCount": 33,
+  "tests": {
+    "javascriptPassed": 126,
+    "pythonPassed": 124,
+    "database": "disposable PGlite; session prepared-statement caching disabled in test runner"
+  },
+  "paidModelCallsForValidation": 0
+}
