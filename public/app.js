@@ -61,7 +61,7 @@ const state={route:'overview',group:5,tab:'normal',query:'',filter:'all',resultM
 Object.assign(state,{categories:normalizeCategoryData(saved?.categories,state.attacks,{current:true}).categories,vectorIds:['direct','indirect'],categoryIds:['direct:instruction-override','direct:role-spoofing','indirect:instruction-override','indirect:role-spoofing'],categoryCounts:Object.create(null),categoryFilter:'all',categoryQuery:'',dataSort:'default',dataPageIndex:1,dataPageFilterKey:null,dbCategorySupport:false,dbCategoryScopeSupport:false,dbKind:'attack',dbNormalRepeat:1});
 const localData={normal:state.normal,attacks:state.attacks,categories:state.categories};
 Object.assign(state,{dbChecked:false,dbConfigured:false,dbReady:false,dbError:"",jobs:[],jobSubmitting:false});
-Object.assign(state,{jobPage:1,jobTotal:0,jobPages:1,jobLoading:false,jobError:'',jobRequest:0,jobFilter:null,jobActive:0,resultReport:{defense:'off',purpose:'attack',vector:'all',model:'all',data:null,loading:false,error:'',request:0}});
+Object.assign(state,{jobPage:1,jobTotal:0,jobPages:1,jobLoading:false,jobError:'',jobRequest:0,jobModel:'',jobFilter:null,jobActive:0,resultReport:{defense:'off',purpose:'attack',vector:'all',model:'all',data:null,loading:false,error:'',request:0}});
 Object.assign(state,{liveModel:'',models:[],connection:'idle',connectionError:'',configured:false,running:false,emailError:null,lastLiveResult:null});
 Object.assign(state,{evaluationMenuOpen:false,resultsMenuOpen:false,comparisonDraft:{models:['',''],defense:'off'},singleEvaluationDraft:{model:'',defense:'off'}});
 Object.assign(state,{attachmentsSupported:false,attachmentDraft:null});
@@ -522,10 +522,12 @@ async function refreshResultMetrics({silent=false}={}){
 function changeResultPurpose(purpose){if(!Object.hasOwn(resultPurposeLabels,purpose)||purpose===state.resultReport.purpose)return;Object.assign(state.resultReport,{purpose,vector:'all',model:'all',data:null,error:'',request:state.resultReport.request+1});shell();}
 async function showModelHistory(model,provider){
   if(!(state.resultReport.data?.models||[]).some(row=>row.model===model))return;
-  state.jobGroup=state.resultReport.purpose==='attack'?(state.resultReport.defense==='off'?'attack':'defense'):'all';
+  state.jobGroup=state.resultReport.purpose==='attack'?(state.resultReport.defense==='off'?'attack':'defense'):state.resultReport.purpose;
+  state.jobModel=model;
   if(state.jobGroup==='defense'){defenseView.filters={...defenseHistory.defaults(),mode:state.resultReport.defense};defenseView.loaded=false;}
   state.jobFilter={model,purpose:state.resultReport.purpose,vector:state.resultReport.purpose==='attack'?state.resultReport.vector:'all'};
   if(provider)state.jobFilter.provider=provider;state.jobs=[];
+  renderHistoryShell();
   await refreshJobs({page:1});$('#web-experiment-history')?.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function settingsPage(){return head('PROJECT STATUS','연동 및 개발 현황','현재 구현 범위와 다음 연결 지점을 확인하세요.',`<button class="btn" data-action="add-note">${icon('plus')}의사결정 기록</button>`)+connectionPanel()+
@@ -601,7 +603,7 @@ function bindDefenseHistoryControls(){
   }));
 }
 function applyDefenseHistoryPage(page){
-  const result=defenseHistory.selectExperiments(defenseView.rows,defenseView.filters,page,5,state.jobFilter||{});
+  const result=defenseHistory.selectExperiments(defenseView.rows,defenseView.filters,page,5,{...state.jobFilter,model:state.jobModel||state.jobFilter?.model});
   Object.assign(state,{jobPage:result.page,jobPages:result.totalPages,jobTotal:result.total,jobs:result.rows});return result;
 }
 function defenseHistoryRows(){
@@ -625,9 +627,60 @@ async function refreshDefenseHistory({page=state.jobPage,silent=false,reload=fal
   finally{if(request===state.jobRequest){state.jobLoading=false;renderJobs();if(!state.jobError&&state.jobActive>0&&['experiments','results'].includes(state.route))jobPollTimer=setTimeout(()=>refreshDefenseHistory({silent:true,reload:true}),5000);}}
 }
 const allHistoryView={rows:[],loaded:false,activeCount:0,progress:''};
+// The model list covers every stored experiment, including models no longer offered by BAZE.
+const historyCatalog={models:null,pending:null,error:''};
+function readHistorySummaries(){
+  if(historyCatalog.pending)return historyCatalog.pending;
+  historyCatalog.error='';
+  historyCatalog.pending=defenseHistory.loadSummaries(dbApi).then(result=>{
+    const names=result.entries.flatMap(row=>row.models||[]).filter(name=>typeof name==='string'&&name);
+    historyCatalog.models=[...new Set(names)].sort((a,b)=>a.localeCompare(b,'ko'));
+    return result;
+  }).catch(error=>{
+    historyCatalog.error='모델 목록을 불러오지 못했어요. 새로고침해 주세요.';
+    throw error;
+  }).finally(()=>{
+    historyCatalog.pending=null;
+    syncHistoryModelControl();
+  });
+  return historyCatalog.pending;
+}
+function historyModelOptions(){
+  const models=new Set(historyCatalog.models||[]);
+  if(state.jobModel)models.add(state.jobModel);
+  return '<option value="">전체 모델</option>'+[...models].map(model=>
+    `<option value="${esc(model)}"${model===state.jobModel?' selected':''}>${esc(model)}</option>`).join('');
+}
+function syncHistoryModelControl(){
+  const select=$('#history-model');
+  if(!select)return;
+  select.innerHTML=historyModelOptions();
+  select.value=state.jobModel;
+  select.disabled=!state.dbReady||(!historyCatalog.models?.length&&!state.jobModel);
+  const status=$('#history-model-status');
+  if(status)status.textContent=historyCatalog.error;
+}
+async function changeHistoryModel(model){
+  if(model===state.jobModel)return;
+  state.jobModel=model;
+  if(state.jobFilter){
+    delete state.jobFilter.provider;
+    if(model)state.jobFilter.model=model;
+    else delete state.jobFilter.model;
+  }
+  state.jobs=[];
+  state.jobPage=1;
+  // These two views filter complete records locally once the current load finishes.
+  if(state.jobLoading&&(state.jobGroup==='defense'||((state.jobGroup||'all')==='all'&&!state.jobFilter))){
+    renderJobs();
+    return;
+  }
+  await refreshJobs({page:1});
+}
 function applyAllHistoryPage(page){
-  const total=allHistoryView.rows.length,totalPages=Math.max(1,Math.ceil(total/5));page=Math.max(1,Math.min(page,totalPages));
-  Object.assign(state,{jobPage:page,jobPages:totalPages,jobTotal:total,jobs:allHistoryView.rows.slice((page-1)*5,page*5)});
+  const rows=state.jobModel?allHistoryView.rows.filter(row=>row.models?.includes(state.jobModel)):allHistoryView.rows;
+  const total=rows.length,totalPages=Math.max(1,Math.ceil(total/5));page=Math.max(1,Math.min(page,totalPages));
+  Object.assign(state,{jobPage:page,jobPages:totalPages,jobTotal:total,jobs:rows.slice((page-1)*5,page*5)});
 }
 async function refreshAllHistory({page=state.jobPage,silent=false,reload=false}={}){
   if(!state.dbReady||!Number.isInteger(page)||page<1)return;
@@ -635,7 +688,7 @@ async function refreshAllHistory({page=state.jobPage,silent=false,reload=false}=
   if(allHistoryView.loaded&&!reload){applyAllHistoryPage(page);renderJobs();if(state.jobActive>0)jobPollTimer=setTimeout(()=>refreshAllHistory({silent:true,reload:true}),5000);return;}
   state.jobLoading=true;state.jobError='';state.jobs=[];state.jobPage=page;allHistoryView.loaded=false;allHistoryView.progress='';if(!silent)renderJobs();
   try{
-    const loaded=await defenseHistory.load(dbApi,{group:'all',isCurrent:()=>request===state.jobRequest&&(state.jobGroup||'all')==='all'&&!state.jobFilter,onProgress:(done,total)=>{allHistoryView.progress=`방어 실험 ${done}/${total}개 조회`;if(request===state.jobRequest)renderJobs();}});
+    const loaded=await defenseHistory.load(dbApi,{group:'all',summaries:readHistorySummaries,isCurrent:()=>request===state.jobRequest&&(state.jobGroup||'all')==='all'&&!state.jobFilter,onProgress:(done,total)=>{allHistoryView.progress=`방어 실험 ${done}/${total}개 조회`;if(request===state.jobRequest)renderJobs();}});
     if(request!==state.jobRequest)return;
     const combined=defenseHistory.combined(loaded,state.attacks);allHistoryView.rows=combined.rows;allHistoryView.loaded=true;allHistoryView.activeCount=combined.activeCount;
     defenseView.rows=combined.defenseRows;defenseView.loaded=true;state.jobActive=combined.activeCount;applyAllHistoryPage(state.jobPage);
@@ -643,15 +696,29 @@ async function refreshAllHistory({page=state.jobPage,silent=false,reload=false}=
   finally{if(request===state.jobRequest){state.jobLoading=false;renderJobs();if(!state.jobError&&state.jobActive>0&&['experiments','results'].includes(state.route))jobPollTimer=setTimeout(()=>refreshAllHistory({silent:true,reload:true}),5000);}}
 }
 
+const historyGroups=[['all','전체 기록'],['attack','공격 실험 · 방어 OFF'],['defense','방어 실험 · 방어 ON']];
+const resultHistoryGroups=[...historyGroups,['normal',resultPurposeLabels.normal],['performance',resultPurposeLabels.performance]];
 function databaseResultsPanel(){
   if(workflowPreview)return workflowHistoryPanel();
-  return `<section class="panel section-space results-history" id="web-experiment-history"><div class="panel-head"><div><h2>웹에서 진행한 실험</h2><p>공격 실험 · 방어 실험 · 정상 응답 확인 · 성능 평가</p></div><button class="btn" data-action="db-refresh" ${state.dbReady&&!state.jobLoading?'':'disabled'}>새로고침</button></div><div class="results-purpose-tabs" role="group" aria-label="공격·방어 실험 기록 구분">${[['all','전체 기록'],['attack','공격 실험 · 방어 OFF'],['defense','방어 실험 · 방어 ON']].map(([id,label])=>`<button data-action="history-group" data-group="${id}" class="${(state.jobGroup||'all')===id?'active':''}" aria-pressed="${(state.jobGroup||'all')===id}">${label}</button>`).join('')}</div>${state.jobGroup==='defense'?defenseHistoryControls():''}<div id="db-job-list">${databaseJobRows()}</div></section>`;
+  const results=state.route==='results';
+  const groups=results?resultHistoryGroups:historyGroups;
+  const buttons=groups.map(([id,label])=>{
+    const active=(state.jobGroup||'all')===id;
+    return `<button data-action="history-group" data-group="${id}" class="${active?'active':''}" aria-pressed="${active}">${label}</button>`;
+  }).join('');
+  const modelFilter=results?`<div class="history-model-field"><label for="history-model" class="results-filter-label">실험 모델</label>
+    <span class="results-select-control">${icon('layers')}<select id="history-model" aria-controls="db-job-list" ${state.dbReady&&(historyCatalog.models?.length||state.jobModel)?'':'disabled'}>${historyModelOptions()}</select>${icon('chevron','results-select-arrow')}</span>
+    <span id="history-model-status" role="status">${esc(historyCatalog.error)}</span></div>`:'';
+  return `<section class="panel section-space results-history" id="web-experiment-history">
+    <div class="panel-head"><div><h2>웹에서 진행한 실험</h2><p>공격 실험 · 방어 실험 · 정상 응답 확인 · 성능 평가</p></div><button class="btn" data-action="db-refresh" ${state.dbReady&&!state.jobLoading?'':'disabled'}>새로고침</button></div>
+    <div class="results-purpose-tabs ${results?'history-type-tabs':''}" role="group" aria-label="실험 기록 종류">${buttons}</div>
+    ${modelFilter}${state.jobGroup==='defense'?defenseHistoryControls():''}<div id="db-job-list">${databaseJobRows()}</div></section>`;
 }
 const jobStatus=s=>({queued:'실행 대기',running:'실행 중',completed:'완료',partial:'일부 실패',failed:'실패',cancelled:'취소',blocked:'입력 사전 차단',timed_out:'시간 초과'}[s]||s);
 function databaseJobRows(){
   if(!state.dbReady)return `<div class="results-history-message" role="status">${esc(state.dbError||'서버 연결 후 실험 기록을 확인할 수 있어요.')}</div>`;
   if(state.jobGroup==='defense')return defenseHistoryRows();
-  const filter=state.jobFilter?`<div class="results-history-filter"><span>${esc(state.jobFilter.model)} · ${esc(resultPurposeLabels[state.jobFilter.purpose])}${state.jobFilter.vector!=='all'?' · '+esc(vectorName(state.jobFilter.vector)):''}</span><button class="btn text" data-action="db-clear-filter">전체 실험 보기</button></div>`:'';
+  const filter=state.jobFilter?`<div class="results-history-filter"><span>${esc(state.jobFilter.model||'전체 모델')} · ${esc(resultPurposeLabels[state.jobFilter.purpose])}${state.jobFilter.vector!=='all'?' · '+esc(vectorName(state.jobFilter.vector)):''}</span><button class="btn text" data-action="db-clear-filter">전체 실험 보기</button></div>`:'';
   const message=state.jobError?`<div class="results-history-message error" role="alert">${esc(state.jobError)} <button class="btn text" data-action="db-refresh">다시 불러오기</button></div>`:state.jobLoading?'<div class="results-history-message" role="status">기록을 불러오는 중이에요…</div>':'';
   return filter+message+experimentHistoryTable(state.jobs.slice(0,5));
 }
@@ -662,14 +729,22 @@ function experimentHistoryTable(rows){
 let jobPollTimer=null;
 function renderJobs(){$$('[data-action="history-group"]').forEach(el=>{const active=el.dataset.group===(state.jobGroup||'all');el.classList.toggle('active',active);el.setAttribute('aria-pressed',String(active));});if($('#db-job-list'))$('#db-job-list').innerHTML=databaseJobRows();const button=$('#web-experiment-history [data-action="db-refresh"]');if(button)button.disabled=!state.dbReady||state.jobLoading;}
 async function refreshJobs({page=state.jobPage,silent=false,reload=false}={}){
+  const allRecords=(state.jobGroup||'all')==='all'&&!state.jobFilter;
+  if(state.dbReady&&!allRecords&&$('#history-model')&&(reload||historyCatalog.models===null)){
+    // Fetch only summary pages if navigation interrupted the initial history load.
+    void readHistorySummaries().catch(()=>{});
+  }
   if(state.jobGroup==='defense')return refreshDefenseHistory({page,silent,reload});
-  if((state.jobGroup||'all')==='all'&&!state.jobFilter)return refreshAllHistory({page,silent,reload});
+  if(allRecords)return refreshAllHistory({page,silent,reload});
   if(!state.dbReady||!Number.isInteger(page)||page<1)return;
   clearTimeout(jobPollTimer);const request=++state.jobRequest,changed=page!==state.jobPage;
   state.jobPage=page;state.jobLoading=true;state.jobError='';if(changed)state.jobs=[];if(!silent)renderJobs();
   let path='/api/experiments?page='+page+'&pageSize=5';
-  if(state.jobGroup&&state.jobGroup!=='all')path+='&experimentGroup='+encodeURIComponent(state.jobGroup);
-  if(state.jobFilter)for(const [key,value] of Object.entries(state.jobFilter))path+='&'+encodeURIComponent(key)+'='+encodeURIComponent(value);
+  const filters={...state.jobFilter};
+  if(state.jobGroup==='normal'||state.jobGroup==='performance')filters.purpose=state.jobGroup;
+  if(state.jobGroup==='attack')filters.experimentGroup='attack';
+  if(state.jobModel)filters.model=state.jobModel;
+  for(const [key,value] of Object.entries(filters))path+='&'+encodeURIComponent(key)+'='+encodeURIComponent(value);
   try{
     const data=await dbApi(path);if(request!==state.jobRequest)return;
     if(!Array.isArray(data.experiments)||data.experiments.some(job=>!Object.hasOwn(resultPurposeLabels,job?.purpose))||data.experiments.length>5||!Number.isInteger(data.total)||data.total<0||!Number.isInteger(data.page)||data.page<1||!Number.isInteger(data.totalPages)||data.totalPages<1||data.pageSize!==5)throw new Error('실험 기록의 페이지 정보를 확인할 수 없어요.');
@@ -681,7 +756,7 @@ async function refreshJobs({page=state.jobPage,silent=false,reload=false}={}){
     }
   }
 }
-async function clearJobFilter(){allHistoryView.loaded=false;state.jobGroup='all';state.jobFilter=null;state.jobs=[];await refreshJobs({page:1});}
+async function clearJobFilter(){allHistoryView.loaded=false;state.jobGroup='all';state.jobModel='';state.jobFilter=null;state.jobs=[];renderHistoryShell();await refreshJobs({page:1});}
 async function openHistoryPerformance(id){
   const row=state.jobs.find(job=>job.id===id),mode=(row?.models?.length||1)>1?'comparison':'single';
   location.hash=mode==='single'?'single-evaluation':'comparison';
@@ -781,9 +856,12 @@ async function showDatabaseExperiment(id,{isCurrent=()=>true}={}){
 }
 
 const pages={overview,email:emailPage,'single-evaluation':singleEvaluationPage,comparison:comparisonPage,experiments:experimentsPage,data:dataPage,results:resultsPage,'normal-result-comparison':()=>renderResultComparison('normal'),'attack-result-comparison':()=>renderResultComparison('attack'),settings:settingsPage};
-function route(){stopPerformancePolling();clearTimeout(jobPollTimer);state.jobRequest++;state.jobLoading=false;const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;if(resultsRoutes.includes(state.route))state.resultsMenuOpen=true;shell();window.scrollTo(0,0);}
+function route(){stopPerformancePolling();clearTimeout(jobPollTimer);state.jobRequest++;state.jobLoading=false;const candidate=location.hash.slice(1).split('?')[0]||(workflowPreview?'experiments':'overview');if(state.route==='results'&&candidate!=='results'){
+    state.jobModel='';state.jobFilter=null;state.jobGroup='all';state.jobPage=1;state.jobs=[];
+  }state.route=Object.hasOwn(pages,candidate)?candidate:'overview';if(evaluationRoutes.includes(state.route))state.evaluationMenuOpen=true;if(resultsRoutes.includes(state.route))state.resultsMenuOpen=true;shell();window.scrollTo(0,0);}
 function bindPage(){
   bindDefenseHistoryControls();
+  $('#history-model')?.addEventListener('change',event=>changeHistoryModel(event.target.value));
   if(['normal-result-comparison','attack-result-comparison'].includes(state.route)){
     resultComparisonCleanup?.();
     resultComparisonCleanup=mountResultComparison($('#main'),{kind:state.route==='normal-result-comparison'?'normal':'attack',api:dbApi,ready:state.dbReady,onOpenRecord:openComparisonRecord});
@@ -1257,11 +1335,11 @@ const actions={
  'db-run':submitDatabaseExperiment,
  'workflow-preview':previewSelectedExperiment,
  'workflow-detail':el=>showWorkflowReport(el.dataset.id),
- 'history-group':async el=>{if(!['all','attack','defense'].includes(el.dataset.group))return;state.jobGroup=el.dataset.group;if(state.jobGroup==='defense')defenseView.loaded=false;if(state.jobGroup==='all')allHistoryView.loaded=false;state.jobFilter=null;state.jobs=[];renderHistoryShell();await refreshJobs({page:1});},
+ 'history-group':async el=>{if(!(state.route==='results'?resultHistoryGroups:historyGroups).some(([id])=>id===el.dataset.group))return;state.jobGroup=el.dataset.group;if(state.jobGroup==='defense')defenseView.loaded=false;if(state.jobGroup==='all')allHistoryView.loaded=false;state.jobFilter=null;state.jobs=[];renderHistoryShell();await refreshJobs({page:1});},
  'db-detail':el=>state.jobs.find(j=>j.id===el.dataset.id)?.purpose==='performance'?openHistoryPerformance(el.dataset.id):showDatabaseExperiment(el.dataset.id),
  'db-refresh':()=>refreshJobs({reload:true}),
- 'defense-history-reset':()=>{defenseView.filters=defenseHistory.defaults();state.jobFilter=null;if(defenseView.loaded)applyDefenseHistoryPage(1);renderHistoryShell();renderJobs();},
- 'defense-history-clear-model':()=>{state.jobFilter=null;applyDefenseHistoryPage(1);renderJobs();},
+ 'defense-history-reset':()=>{defenseView.filters=defenseHistory.defaults();state.jobModel='';state.jobFilter=null;if(defenseView.loaded)applyDefenseHistoryPage(1);renderHistoryShell();renderJobs();},
+ 'defense-history-clear-model':()=>{state.jobFilter=null;state.jobModel='';applyDefenseHistoryPage(1);renderHistoryShell();renderJobs();},
  'db-page':el=>refreshJobs({page:Number(el.dataset.page)}),
  'db-clear-filter':clearJobFilter,
  'results-purpose':el=>changeResultPurpose(el.dataset.purpose),

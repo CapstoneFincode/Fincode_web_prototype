@@ -4,9 +4,7 @@ import {attackOutcome,scenarioInfo,recordedDefense} from './attack-results.js';
 export const defaults=()=>({query:'',vector:'all',mode:'all',outcome:'all',sort:'newest'});
 export class StaleHistory extends Error {}
 
-export async function load(api,{isCurrent=()=>true,onProgress=()=>{},group='defense'}={}){
-  let abandoned=false;
-  const check=()=>{if(!isCurrent()||abandoned)throw new StaleHistory();};
+export async function loadSummaries(api,{group='all',check=()=>{}}={}){
   const parents=new Map();let total=null,pages=1,activeCount=0;
   for(let page=1;page<=pages;page++){
     check();
@@ -19,7 +17,15 @@ export async function load(api,{isCurrent=()=>true,onProgress=()=>{},group='defe
     for(const row of data.experiments)parents.set(row.id,row);
   }
   if(parents.size!==total)throw Error('방어 실험 목록 일부를 불러오지 못했어요. 새로고침해 주세요.');
-  const entries=[...parents.values()],jobs=group==='all'?entries.filter(e=>e.purpose==='attack'&&e.defense_enabled===true):entries,details=new Array(jobs.length);let cursor=0,done=0;
+  return {entries:[...parents.values()],activeCount};
+}
+
+export async function load(api,{isCurrent=()=>true,onProgress=()=>{},group='defense',summaries=loadSummaries}={}){
+  let abandoned=false;
+  const check=()=>{if(!isCurrent()||abandoned)throw new StaleHistory();};
+  const {entries,activeCount}=await summaries(api,{group,check});
+  check();
+  const jobs=group==='all'?entries.filter(e=>e.purpose==='attack'&&e.defense_enabled===true):entries,details=new Array(jobs.length);let cursor=0,done=0;
   async function worker(){
     while(cursor<jobs.length){
       check();const index=cursor++,job=jobs[index];

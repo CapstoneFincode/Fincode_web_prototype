@@ -108,6 +108,25 @@ class PerformanceTest(unittest.IsolatedAsyncioTestCase):
     def result_for(self,summary,model):
         return next(row for row in summary['modelResults'] if row['model']==model)
 
+    async def test_history_filters_by_any_participating_model_before_pagination(self):
+        comparison = await self.start(models=['model-a', 'model-b'])
+        for _ in range(5):
+            await self.start(models=['model-a'])
+
+        params = {'page': 1, 'pageSize': 5, 'purpose': 'performance'}
+        latest = await self.client.get('/api/experiments', params=params)
+        self.assertEqual(latest.status_code, 200, latest.text)
+        self.assertNotIn(comparison, [row['id'] for row in latest.json()['experiments']])
+
+        filtered = await self.client.get('/api/experiments', params={**params, 'model': 'model-b'})
+        self.assertEqual(filtered.status_code, 200, filtered.text)
+        page = filtered.json()
+        self.assertEqual((page['total'], page['totalPages']), (1, 1))
+        self.assertEqual([row['id'] for row in page['experiments']], [comparison])
+        self.assertEqual(page['experiments'][0]['models'], ['model-a', 'model-b'])
+        self.assertEqual(page['experiments'][0]['total'], 4)  # Two emails for each model.
+        self.assertEqual(self.calls, [])
+
     async def test_dataset_is_exact_source_set_and_excludes_sample_rows(self):
         response=await self.client.get('/api/performance/dataset')
         self.assertEqual(response.status_code,200,response.text)

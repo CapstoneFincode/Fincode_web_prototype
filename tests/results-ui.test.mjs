@@ -33,7 +33,7 @@ function app(fetcher=()=>{throw Error('Unexpected request');}){
     document:{addEventListener(){},querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[]},
     window:{addEventListener(){},scrollTo(){}},location:{hash:'#results'},downloads,toasts,performanceOpens});
   vm.runInContext(source+`\nmodal=()=>{};shell=()=>{};renderRuntime=()=>{};toast=message=>toasts.push(message);download=(name,content,type)=>downloads.push({name,content,type});openPerformanceRun=async(mode,id)=>performanceOpens.push({mode,id});
-    globalThis.api={allHistoryView,defenseView,applyDefenseHistoryPage,state,pages,actions,bindPage,databaseJobRows,refreshJobs,clearJobFilter,showModelHistory,refreshResultMetrics,changeResultPurpose,liveResultRows,liveResultsContent,resultBars,resultModelTable,resultModelOptions,resultCsvCell,exportCSV,openHistoryPerformance};`,context);
+    globalThis.api={changeHistoryModel,historyModelOptions,allHistoryView,defenseView,applyDefenseHistoryPage,state,pages,actions,bindPage,databaseJobRows,refreshJobs,clearJobFilter,showModelHistory,refreshResultMetrics,changeResultPurpose,liveResultRows,liveResultsContent,resultBars,resultModelTable,resultModelOptions,resultCsvCell,exportCSV,openHistoryPerformance};`,context);
   Object.assign(context.api.state,{dbChecked:true,dbConfigured:true,dbReady:true,route:'results'});
   return {...context.api,reports,requests,timers,downloads,toasts,performanceOpens,element,location:context.location};
 }
@@ -258,4 +258,82 @@ test('defense filtering keeps full batch progress and detail export; cached pagi
  a.element('#modal');a.element('#attack-report-root');a.element('#db-export');
  await a.actions['db-detail']({dataset:{id:'batch'}});assert.equal(a.reports.at(-1).runs.length,7);
  a.element('#db-export').listeners.click();assert.equal(JSON.parse(a.downloads[0].content).runs.length,7);
+});
+
+
+test('history models include all stored pages and filter multi-model parents before five-row pagination',async()=>{
+  const archived='archived <&> model';
+  const rows=Array.from({length:108},(_,i)=>job(String(i).padStart(3,'0'),{
+    purpose:i<100?'normal':'performance',models:i<100?['first']:['first',archived],total:0,finished:0}));
+  const a=app(url=>{
+    const page=Number(new URL(url,'https://example.test').searchParams.get('page'));
+    return response({experiments:rows.slice((page-1)*100,page*100),page,pageSize:100,total:108,totalPages:2,activeCount:0});
+  });
+  await a.refreshJobs();
+  assert.equal(a.requests.length,2);
+  assert.match(a.historyModelOptions(),/archived &lt;&amp;&gt; model/);
+  await a.refreshJobs({page:3});
+  await a.changeHistoryModel(archived);
+  assert.equal(a.state.jobPage,1);
+  assert.equal(a.state.jobTotal,8);
+  assert.equal(a.state.jobs.length,5);
+  assert.ok(a.state.jobs.every(row=>row.models.includes(archived)&&row.models.length===2));
+  await a.refreshJobs({page:2});
+  assert.equal(a.state.jobs.length,3);
+  assert.match(a.databaseJobRows(),/6–8개/);
+  await a.actions['db-detail']({dataset:{id:a.state.jobs[0].id}});
+  assert.equal(a.performanceOpens[0].mode,'comparison');
+  await a.changeHistoryModel('');
+  assert.equal(a.state.jobPage,1);
+  assert.equal(a.state.jobTotal,108);
+  assert.equal(a.requests.length,2);
+});
+
+test('history tabs retain the selected model across OFF, normal, performance and ON records',async()=>{
+  const selected='retired model & v1';
+  const run=(id,requested_model,vector)=>({id,requested_model,status:'blocked',security_gateway_enabled:true,expected_label:'attack',
+    input_snapshot:{defenseMode:'filter',attackScenario:{key:id,name:id,vector}},evaluations:[]});
+  const detail={experiment:{id:'protected',purpose:'attack'},runs:[run('x',selected,'direct'),run('y','other','indirect')]};
+  const parent=job('protected',{defense_enabled:true,models:[selected,'other']});
+  const a=app(url=>{
+    if(url==='/api/experiments/protected')return response(detail);
+    if(url.includes('pageSize=100'))return response({page:1,pageSize:100,total:1,totalPages:1,experiments:[parent]});
+    return response(history(1,{experiments:[],total:0,totalPages:1}));
+  });
+  await a.refreshJobs();
+  await a.changeHistoryModel(selected);
+  for(const group of ['attack','normal','performance']){
+    await a.actions['history-group']({dataset:{group}});
+    const params=new URL(a.requests.at(-1).url,'https://example.test').searchParams;
+    assert.equal(params.get('model'),selected);
+    assert.equal(params.get(group==='attack'?'experimentGroup':'purpose'),group);
+    assert.equal(params.get('page'),'1');
+    assert.equal(a.state.jobTotal,0);
+    assert.match(a.databaseJobRows(),/해당 조건의 실행 기록이 없어요/);
+  }
+  await a.actions['history-group']({dataset:{group:'defense'}});
+  assert.equal(a.state.jobTotal,1);
+  a.defenseView.filters.vector='indirect';
+  a.applyDefenseHistoryPage(1);
+  assert.equal(a.state.jobTotal,0);
+  await a.actions['defense-history-reset']();
+  assert.equal(a.state.jobModel,'');
+  assert.equal(a.state.jobs[0].models.length,2);
+});
+
+test('switching tabs mid-load retains the complete model catalog without loading defense detail twice',async()=>{
+  let resolveCatalog;
+  const pending=new Promise(resolve=>{resolveCatalog=resolve;});
+  const a=app(url=>url.includes('pageSize=100')?pending:response(history(1,{experiments:[],total:0,totalPages:1})));
+  const select=a.element('#history-model');
+  const initial=a.refreshJobs();
+  await a.actions['history-group']({dataset:{group:'normal'}});
+  const parent=job('on',{defense_enabled:true,models:['archived']});
+  resolveCatalog(response({page:1,pageSize:100,total:1,totalPages:1,experiments:[parent]}));
+  await initial;
+  assert.deepEqual(a.requests.map(r=>r.url),['/api/experiments?page=1&pageSize=100','/api/experiments?page=1&pageSize=5&purpose=normal']);
+  assert.match(select.innerHTML,/archived/);
+  assert.equal(select.disabled,false);
+  assert.equal(a.state.jobTotal,0);
+  assert.equal(a.state.jobGroup,'normal');
 });
